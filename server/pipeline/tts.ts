@@ -1,0 +1,168 @@
+import WebSocket from 'ws'
+
+/**
+ * Cartesia streaming text-to-speech.
+ *
+ * A persistent socket rather than a request per sentence: the interviewer speaks
+ * two or three sentences per turn, and paying connection setup on each one would
+ * cost more than the synthesis itself. Sentences are pushed as they arrive from
+ * the sentence splitter, so the first one is already playing while the model is
+ * still writing the second.
+ *
+ * Audio comes back as raw PCM rather than WAV. A WAV header per chunk would have
+ * to be stripped before the browser could append it to a continuous playback
+ * buffer, and headers arriving mid-stream are exactly the kind of thing that
+ * produces clicks between sentences.
+ */
+
+const CARTESIA_WS = 'wss://api.cartesia.ai/tts/websocket'
+const CARTESIA_VERSION = '2024-06-10'
+
+/** Sonic is the low-latency model; ~40ms to first byte in Cartesia's own numbers. */
+const MODEL_ID = 'sonic-2'
+
+/** A neutral, unhurried voice. Interviewers do not sound like advertisements. */
+export const DEFAULT_VOICE_ID = 'a0e99841-438c-4a64-b679-ae501e7d6091'
+
+/**
+ * 16kHz mono PCM throughout the pipeline. Deepgram and the browser worklets use
+ * the same rate, so nothing has to resample.
+ */
+export const SAMPLE_RATE = 16_000
+
+export interface TtsEvents {
+  /** Raw PCM16 for the browser to queue. */
+  onAudio: (pcm: Buffer, contextId: string) => void
+  /** All audio for a context has been sent. */
+  onDone: (contextId: string) => void
+  onError: (error: Error) => void
+}
+
+export interface TtsClient {
+  /**
+   * Speak one sentence. Sentences sharing a `contextId` are synthesised as one
+   * continuous utterance, so prosody carries across them instead of each
+   * sentence sounding like a fresh sentence.
+   */
+  speak(text: string, contextId: string): void
+  /** Mark a context finished so Cartesia can flush it. */
+  finish(contextId: string): void
+  /**
+   * Barge-in. Stops caring about everything for this context; any audio still
+   * in flight is dropped rather than forwarded.
+   *
+   * This only stops audio leaving the *server*. Whatever the browser has already
+   * buffered must be flushed there too — see lib/audio/playback.ts. Missing that
+   * half is the classic barge-in bug: the interviewer keeps talking for another
+   * second from the buffer after being interrupted.
+   */
+  cancel(contextId: string): void
+  close(): void
+}
+
+interface CartesiaMessage {
+  type?: string
+  data?: string
+  context_id?: string
+  error?: string
+  done?: boolean
+}
+
+export async function createTtsClient(
+  apiKey: string,
+  events: TtsEvents,
+  voiceId = DEFAULT_VOICE_ID,
+): Promise<TtsClient> {
+  if (!apiKey) throw new Error('CARTESIA_API_KEY is not set — add it to .env.local')
+
+  const url = `${CARTESIA_WS}?api_key=${encodeURIComponent(apiKey)}&cartesia_version=${CARTESIA_VERSION}`
+  const socket = new WebSocket(url)
+
+  /** Contexts abandoned by barge-in; late audio for them is discarded. */
+  const cancelled = new Set<string>()
+  /** Contexts already opened, so we know whether to continue or start fresh. */
+  const started = new Set<string>()
+
+  await new Promise<void>((resolve, reject) => {
+    socket.once('open', resolve)
+    socket.once('error', reject)
+  })
+
+  socket.on('message', (raw) => {
+    let message: CartesiaMessage
+    try {
+      message = JSON.parse(raw.toString()) as CartesiaMessage
+    } catch {
+      return
+    }
+
+    const contextId = message.context_id ?? ''
+    if (cancelled.has(contextId)) return
+
+    if (message.error) {
+      events.onError(new Error(`Cartesia: ${message.error}`))
+      return
+    }
+
+    if (message.type === 'chunk' && message.data) {
+      events.onAudio(Buffer.from(message.data, 'base64'), contextId)
+    } else if (message.type === 'done' || message.done) {
+      started.delete(contextId)
+      events.onDone(contextId)
+    }
+  })
+
+  socket.on('error', (error) => events.onError(error as Error))
+
+  const send = (payload: unknown) => {
+    if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(payload))
+  }
+
+  return {
+    speak(text, contextId) {
+      if (cancelled.has(contextId) || text.trim() === '') return
+      send({
+        model_id: MODEL_ID,
+        transcript: text,
+        voice: { mode: 'id', id: voiceId },
+        output_format: {
+          container: 'raw',
+          encoding: 'pcm_s16le',
+          sample_rate: SAMPLE_RATE,
+        },
+        context_id: contextId,
+        // `continue: true` keeps the utterance open so the next sentence flows
+        // on naturally instead of restarting the prosody.
+        continue: true,
+      })
+      started.add(contextId)
+    },
+
+    finish(contextId) {
+      if (cancelled.has(contextId) || !started.has(contextId)) return
+      // An empty transcript with continue:false is Cartesia's end-of-utterance
+      // marker; without it the context stays open and never emits `done`.
+      send({
+        model_id: MODEL_ID,
+        transcript: '',
+        voice: { mode: 'id', id: voiceId },
+        output_format: {
+          container: 'raw',
+          encoding: 'pcm_s16le',
+          sample_rate: SAMPLE_RATE,
+        },
+        context_id: contextId,
+        continue: false,
+      })
+    },
+
+    cancel(contextId) {
+      cancelled.add(contextId)
+      started.delete(contextId)
+    },
+
+    close() {
+      if (socket.readyState === WebSocket.OPEN) socket.close()
+    },
+  }
+}

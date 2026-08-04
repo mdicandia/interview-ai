@@ -1,26 +1,98 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/*
+ * Fixed dark palette. This is an IDE-shaped tool used for focused 45-minute
+ * sessions, so it commits to one look rather than tracking the system theme —
+ * a light-mode code editor next to a dark results panel reads as unfinished.
+ */
+@theme {
+  --color-surface-0: #0b0d10; /* page */
+  --color-surface-1: #121519; /* panels */
+  --color-surface-2: #191d23; /* raised: headers, cards */
+  --color-surface-3: #232830; /* borders, dividers */
+
+  --color-ink-0: #e8eaed; /* primary text */
+  --color-ink-1: #a8b0bb; /* secondary text */
+  --color-ink-2: #6b7482; /* muted / metadata */
+
+  --color-accent: #5b9dff;
+  --color-accent-dim: #2f4d80;
+
+  --color-pass: #3fb950;
+  --color-fail: #f85149;
+  --color-warn: #d29922;
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", Menlo, monospace;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  height: 100%;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-surface-0);
+  color: var(--color-ink-0);
+  font-family: var(--font-sans);
+}
+
+/* Thin scrollbars — the default macOS overlay bars sit awkwardly over panels. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-surface-3) transparent;
+}
+
+/*
+ * Markdown rendering for problem statements. Scoped to .prose-statement so it
+ * cannot leak into the editor or results panel.
+ */
+.prose-statement {
+  line-height: 1.65;
+  color: var(--color-ink-1);
+}
+.prose-statement > * + * {
+  margin-top: 0.9rem;
+}
+.prose-statement strong {
+  color: var(--color-ink-0);
+  font-weight: 600;
+}
+.prose-statement h2,
+.prose-statement h3 {
+  color: var(--color-ink-0);
+  font-weight: 600;
+  font-size: 0.95rem;
+  letter-spacing: 0.01em;
+  margin-top: 1.5rem;
+}
+.prose-statement code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-surface-3);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+  color: var(--color-ink-0);
+}
+.prose-statement pre {
+  background: var(--color-surface-0);
+  border: 1px solid var(--color-surface-3);
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+  overflow-x: auto;
+}
+.prose-statement pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+.prose-statement ul {
+  list-style: disc;
+  padding-left: 1.25rem;
+}
+.prose-statement li + li {
+  margin-top: 0.3rem;
 }

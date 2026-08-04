@@ -1,7 +1,8 @@
-import type { NextConfig } from "next";
+import type { NextConfig } from 'next'
 
 const nextConfig: NextConfig = {
-  /* config options here */
-};
+  // Pyodide is loaded at runtime from /public/pyodide (see lib/runtime/pyodide.worker.ts),
+  // not bundled, so it needs no build configuration here.
+}
 
-export default nextConfig;
+export default nextConfig

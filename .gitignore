@@ -39,3 +39,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# keep the example env committed
+!.env.example
+
+# wasm runtimes (copied from node_modules by scripts/copy-runtime-assets.mjs)
+/public/pyodide/
+/public/esbuild/
+/public/vendor/

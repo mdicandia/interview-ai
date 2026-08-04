@@ -13,8 +13,10 @@ import {
 } from '@/lib/problems/types'
 import { RuntimeClient, type RuntimeStatus } from '@/lib/runtime/client'
 import type { RunSummary, TestResult } from '@/lib/runtime/protocol'
+import type { VoiceClient } from '@/lib/client/voice'
 import { Editor } from './Editor'
 import { SessionBar } from './SessionBar'
+import { VoicePanel } from './VoicePanel'
 import { TestPanel } from './TestPanel'
 
 const BOOT_COPY: Partial<Record<RuntimeStatus, string>> = {
@@ -81,6 +83,10 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
   const frameRef = useRef<HTMLIFrameElement | null>(null)
   const isFrontend = problem.kind === 'workspace' && problem.variant === 'frontend'
 
+  // Held so a finished test run can be reported to the interviewer, which is
+  // what lets it say "that one's still failing" instead of waiting to be told.
+  const voiceRef = useRef<VoiceClient | null>(null)
+
   const runtimeRef = useRef<RuntimeClient | null>(null)
 
   /**
@@ -134,6 +140,15 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
     [language, activeFile.path],
   )
 
+  const reportToInterviewer = useCallback((result: RunSummary) => {
+    voiceRef.current?.sendTestResults({
+      passed: result.passed,
+      total: result.total,
+      failing: result.results.filter((r) => r.status !== 'pass').map((r) => r.name),
+      compileError: result.compileError,
+    })
+  }, [])
+
   const run = useCallback(async () => {
     if (running) return
     const client = getClient()
@@ -164,6 +179,7 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
       })
       setSummary(frameResult)
       setRunning(false)
+      reportToInterviewer(frameResult)
       return
     }
 
@@ -190,7 +206,8 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
 
     setSummary(result)
     setRunning(false)
-  }, [drafts, files, getClient, isFrontend, language, problem, running])
+    reportToInterviewer(result)
+  }, [drafts, files, getClient, isFrontend, language, problem, reportToInterviewer, running])
 
   const resetToStarter = useCallback(() => {
     setDrafts((prev) => ({
@@ -374,6 +391,19 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
                 streaming={streaming}
                 running={running}
                 bootMessage={bootMessage}
+              />
+            </div>
+            <div className="w-[300px] shrink-0 border-t border-surface-3">
+              <VoicePanel
+                problemSlug={problem.slug}
+                language={language}
+                files={files.map((f) => ({
+                  path: f.path,
+                  content: f.readOnly ? f.content : (drafts[language][f.path] ?? f.content),
+                }))}
+                activePath={activePath}
+                onRunTests={run}
+                clientRef={(client) => { voiceRef.current = client }}
               />
             </div>
           </div>

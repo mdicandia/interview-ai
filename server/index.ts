@@ -40,6 +40,19 @@ const server = new WebSocketServer({ port: PORT })
 server.on('connection', (socket: WebSocket) => {
   let session: InterviewSession | null = null
 
+  /**
+   * Resolves once `start` has finished. Every other message waits on it.
+   *
+   * Messages are handled without awaiting each other, so a `code` or
+   * `test-results` frame arriving while the session is still connecting to
+   * Deepgram and Cartesia would otherwise be processed against a half-built
+   * session — observed in testing as a `state` message overtaking `ready`, with
+   * the interviewer replying before it had announced it was listening. The
+   * browser client happens to wait for `ready` before sending anything, but the
+   * server should not depend on the client being polite.
+   */
+  let started: Promise<void> = Promise.resolve()
+
   const send = (message: ServerMessage) => {
     if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message))
   }
@@ -73,6 +86,9 @@ server.on('connection', (socket: WebSocket) => {
   })
 
   async function handle(message: ClientMessage) {
+    // Anything that touches the session must wait for it to exist.
+    if (message.type !== 'start') await started
+
     switch (message.type) {
       case 'start': {
         if (session) return
@@ -81,6 +97,12 @@ server.on('connection', (socket: WebSocket) => {
           fail(`Unknown problem: ${message.problemSlug}`)
           return
         }
+
+        let markStarted: () => void
+        started = new Promise<void>((resolve) => {
+          markStarted = resolve
+        })
+
         try {
           session = new InterviewSession({
             problem,
@@ -96,6 +118,8 @@ server.on('connection', (socket: WebSocket) => {
         } catch (error) {
           session = null
           fail(error instanceof Error ? error.message : String(error))
+        } finally {
+          markStarted!()
         }
         break
       }

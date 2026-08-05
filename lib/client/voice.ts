@@ -194,6 +194,11 @@ export class VoiceClient {
     this.#send({ type: 'test-results', ...results })
   }
 
+  /** Tell the interviewer a text hint was taken, so it doesn't repeat it. */
+  noteHint(level: number, text: string): void {
+    this.#send({ type: 'hint-taken', level, text })
+  }
+
   toggleMute(): void {
     const muted = !this.#snapshot.muted
     this.#audio?.setMuted(muted)

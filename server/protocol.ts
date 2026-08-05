@@ -43,6 +43,12 @@ export type ClientMessage =
    * faster local signal for muting.
    */
   | { type: 'mic'; enabled: boolean }
+  /**
+   * The candidate took a text hint. Told to the interviewer so it doesn't
+   * re-offer the same nudge, and so the report can weigh it — asking for help is
+   * a signal a real interviewer would remember.
+   */
+  | { type: 'hint-taken'; level: number; text: string }
   /** End the session and generate the report. */
   | { type: 'end' }
 

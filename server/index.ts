@@ -137,6 +137,10 @@ server.on('connection', (socket: WebSocket) => {
         })
         break
 
+      case 'hint-taken':
+        session?.noteHint(message.level, message.text)
+        break
+
       case 'mic':
         // The browser gates its own microphone; nothing to do server-side yet.
         break

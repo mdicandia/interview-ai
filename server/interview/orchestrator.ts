@@ -72,6 +72,9 @@ export class InterviewSession {
   /** Everything said, for the post-session report. */
   readonly transcript: { role: 'candidate' | 'interviewer'; text: string; at: number }[] = []
 
+  /** Hints taken from the text panel, for the report. */
+  readonly hintsTaken: { level: number; text: string; at: number }[] = []
+
   constructor(config: SessionConfig) {
     this.#config = config
     this.#frozenPrefix = buildFrozenPrefix({ problem: config.problem, language: config.language })
@@ -130,6 +133,24 @@ export class InterviewSession {
       : `[They ran the tests: ${tests.passed} of ${tests.total} passing.` +
         (tests.failing.length > 0 ? ` Still failing: ${tests.failing.join(', ')}]` : ']')
     void this.#respond(summary)
+  }
+
+  /**
+   * Records a hint the candidate took from the text panel.
+   *
+   * Deliberately silent: it goes into the history so the interviewer knows not
+   * to repeat the nudge, but it does not trigger a spoken turn. Being told "I
+   * see you took a hint" out loud would be both patronising and a needless
+   * interruption.
+   */
+  noteHint(level: number, text: string): void {
+    this.hintsTaken.push({ level, text, at: Date.now() })
+    this.#history.push({
+      role: 'user',
+      content:
+        `[They pressed the hint button and were shown hint ${level}: "${text}" — ` +
+        'do not repeat this nudge, and do not mention that they took it. Carry on.]',
+    })
   }
 
   async end(): Promise<void> {

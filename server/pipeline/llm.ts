@@ -82,7 +82,23 @@ export interface LLMProvider {
   /** Low-latency path: what the interviewer says out loud, mid-session. */
   stream(options: StreamOptions): Promise<StreamResult>
   /** Quality path: the post-session report. Latency is irrelevant here. */
-  complete(options: { messages: Message[]; maxTokens?: number }): Promise<string>
+  complete(options: {
+    messages: Message[]
+    maxTokens?: number
+    /**
+     * Chain-of-thought before answering. **Off by default, deliberately.**
+     *
+     * `max_tokens` caps reasoning *and* answer together, and reasoning goes
+     * first. Asking v4-pro for a two-sentence hint with `max_tokens: 200`
+     * returns an empty string: measured `reasoning_tokens: 200`,
+     * `finish_reason: 'length'`, 912 characters of thinking, and not one word of
+     * answer. Nothing errors — you just get `''`.
+     *
+     * Turn this on only for genuinely hard, long-form work like the report, and
+     * give it a budget with room for both halves.
+     */
+    thinking?: boolean
+  }): Promise<string>
 }
 
 const DEEPSEEK_URL = 'https://api.deepseek.com/chat/completions'
@@ -203,20 +219,41 @@ export function createDeepSeekProvider(apiKey: string): LLMProvider {
       return { text: text(), usage }
     },
 
-    async complete({ messages, maxTokens = 4000 }) {
+    async complete({ messages, maxTokens = 4000, thinking = false }) {
       const response = await post({
         model: REPORT_MODEL,
         stream: false,
         max_tokens: maxTokens,
+        ...(thinking ? {} : { thinking: { type: 'disabled' } }),
         messages,
       })
       if (!response.ok) {
         throw new Error(`DeepSeek ${response.status}: ${(await response.text()).slice(0, 200)}`)
       }
       const json = (await response.json()) as {
-        choices?: { message?: { content?: string } }[]
+        choices?: {
+          message?: { content?: string }
+          finish_reason?: string
+        }[]
+        usage?: { completion_tokens_details?: { reasoning_tokens?: number } }
       }
-      return json.choices?.[0]?.message?.content ?? ''
+
+      const choice = json.choices?.[0]
+      const content = choice?.message?.content ?? ''
+
+      // Fail loudly rather than returning an empty string. The overwhelmingly
+      // likely cause is the token budget being eaten by reasoning, and a silent
+      // '' is very hard to trace back to that.
+      if (content.trim() === '') {
+        const reasoned = json.usage?.completion_tokens_details?.reasoning_tokens ?? 0
+        throw new Error(
+          `DeepSeek returned no content (finish_reason: ${choice?.finish_reason ?? 'unknown'}` +
+            (reasoned > 0 ? `, ${reasoned} tokens spent reasoning` : '') +
+            '). Raise maxTokens, or leave `thinking` off.',
+        )
+      }
+
+      return content
     },
   }
 }

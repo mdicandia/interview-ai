@@ -17,6 +17,7 @@ import type { VoiceClient } from '@/lib/client/voice'
 import { Editor } from './Editor'
 import { SessionBar } from './SessionBar'
 import { VoicePanel } from './VoicePanel'
+import { HintPanel, type Hint } from './HintPanel'
 import { TestPanel } from './TestPanel'
 
 const BOOT_COPY: Partial<Record<RuntimeStatus, string>> = {
@@ -71,6 +72,11 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const activePath =
     selectedPath && files.some((f) => f.path === selectedPath) ? selectedPath : firstEditable
+
+  // Both assist panels stay mounted and are hidden with CSS rather than
+  // unmounted. Unmounting VoicePanel would tear down the WebSocket and the
+  // microphone, so glancing at a hint would end the interview.
+  const [assistTab, setAssistTab] = useState<'interviewer' | 'hints'>('interviewer')
 
   const [summary, setSummary] = useState<RunSummary | null>(null)
   const [streaming, setStreaming] = useState<TestResult[]>([])
@@ -139,6 +145,19 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
       })),
     [language, activeFile.path],
   )
+
+  const currentFiles = useMemo(
+    () =>
+      files.map((f) => ({
+        path: f.path,
+        content: f.readOnly ? f.content : (drafts[language][f.path] ?? f.content),
+      })),
+    [files, drafts, language],
+  )
+
+  const onHint = useCallback((hint: Hint) => {
+    voiceRef.current?.noteHint(hint.level, hint.text)
+  }, [])
 
   const reportToInterviewer = useCallback((result: RunSummary) => {
     voiceRef.current?.sendTestResults({
@@ -393,18 +412,41 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
                 bootMessage={bootMessage}
               />
             </div>
-            <div className="w-[300px] shrink-0 border-t border-surface-3">
-              <VoicePanel
-                problemSlug={problem.slug}
-                language={language}
-                files={files.map((f) => ({
-                  path: f.path,
-                  content: f.readOnly ? f.content : (drafts[language][f.path] ?? f.content),
-                }))}
-                activePath={activePath}
-                onRunTests={run}
-                clientRef={(client) => { voiceRef.current = client }}
-              />
+            <div className="flex w-[320px] shrink-0 flex-col border-t border-surface-3">
+              <div className="flex shrink-0 border-b border-l border-surface-3 bg-surface-2">
+                {(['interviewer', 'hints'] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    onClick={() => setAssistTab(tab)}
+                    className={`flex-1 px-3 py-1.5 text-[11px] uppercase tracking-wider transition-colors ${
+                      assistTab === tab
+                        ? 'bg-surface-1 text-ink-0'
+                        : 'text-ink-2 hover:text-ink-1'
+                    }`}
+                  >
+                    {tab === 'interviewer' ? 'Interviewer' : 'Hints'}
+                  </button>
+                ))}
+              </div>
+              <div className={`min-h-0 flex-1 ${assistTab === 'interviewer' ? '' : 'hidden'}`}>
+                <VoicePanel
+                  problemSlug={problem.slug}
+                  language={language}
+                  files={currentFiles}
+                  activePath={activePath}
+                  onRunTests={run}
+                  clientRef={(client) => { voiceRef.current = client }}
+                />
+              </div>
+              <div className={`min-h-0 flex-1 ${assistTab === 'hints' ? '' : 'hidden'}`}>
+                <HintPanel
+                  problemSlug={problem.slug}
+                  language={language}
+                  files={currentFiles}
+                  onHint={onHint}
+                />
+              </div>
             </div>
           </div>
         </section>

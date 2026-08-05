@@ -1,3 +1,13 @@
-ignoredBuiltDependencies:
-  - sharp
-  - unrs-resolver
+# pnpm 11 requires every build script to be approved explicitly.
+#
+# esbuild needs its postinstall: it downloads the platform-native binary, which
+# scripts/copy-runtime-assets.mjs uses to pre-bundle React for the frontend
+# sandbox. Without it that step fails.
+#
+# sharp and unrs-resolver are optional native builds (Next.js image optimisation
+# and an ESLint resolver). Both fall back to slower pure-JS paths, and neither is
+# needed for a local single-user tool.
+allowBuilds:
+  esbuild: true
+  sharp: false
+  unrs-resolver: false

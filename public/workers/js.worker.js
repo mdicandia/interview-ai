@@ -396,6 +396,25 @@ export function typeInto(element, value) {
   })
 }
 
+/**
+ * Presses a key on an element. Needed for anything with keyboard navigation,
+ * which for a component build is usually half the specification.
+ */
+export function press(element, key, init = {}) {
+  if (!element) throw new Error('press() was given nothing to press')
+  act(() => {
+    element.dispatchEvent(
+      new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }),
+    )
+  })
+}
+
+/** Focuses an element, so subsequent key presses land where you expect. */
+export function focus(element) {
+  if (!element) throw new Error('focus() was given nothing to focus')
+  act(() => { element.focus() })
+}
+
 /** Lets effects, timers, and pending state updates settle. */
 export async function settle(ms = 0) {
   await act(async () => {

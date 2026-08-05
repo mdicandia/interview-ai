@@ -2,6 +2,7 @@ import type { AlgorithmProblem, Problem, WorkspaceProblem } from '@/lib/problems
 import { longestSubstring } from './longest-substring'
 import { mergeIntervals } from './merge-intervals'
 import { twoSum } from './two-sum'
+import { autocompleteBuild } from './autocomplete-build'
 import { flakyRetry } from './flaky-retry'
 import { idempotentCharge } from './idempotent-charge'
 import { nPlusOneQueries } from './n-plus-one-queries'
@@ -21,6 +22,7 @@ export const PROBLEMS: readonly Problem[] = [
   idempotentCharge,
   nPlusOneQueries,
   staleCounter,
+  autocompleteBuild,
   webhookLedger,
   rateLimiterWindow,
   orderPricing,

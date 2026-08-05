@@ -49,7 +49,7 @@ export type ClientMessage =
    * a signal a real interviewer would remember.
    */
   | { type: 'hint-taken'; level: number; text: string }
-  /** End the session and generate the report. */
+  /** Close the session. The report is generated separately, over HTTP. */
   | { type: 'end' }
 
 /* ------------------------------------------------------------ server → client */
@@ -88,8 +88,14 @@ export type ServerMessage =
   | { type: 'flush-audio' }
   /** The interviewer asked to run the tests. The browser owns execution. */
   | { type: 'run-tests' }
-  /** Session finished; the report is ready. */
-  | { type: 'report'; markdown: string }
+  /*
+   * There is deliberately no 'report' message.
+   *
+   * The report is a POST to /api/report, built from an evidence record the
+   * browser accumulates — see lib/session/record.ts. It has to work for a session
+   * done in silence with no microphone, which is exactly the case a socket-borne
+   * report cannot serve, because the socket was never opened.
+   */
   | { type: 'error'; message: string; fatal: boolean }
 
 /** Type guards, so the socket handlers don't hand-roll `in` checks. */

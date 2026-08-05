@@ -167,10 +167,6 @@ export class VoiceClient {
             : { error: message.message },
         )
         break
-
-      case 'report':
-        // Handled once the report screen exists.
-        break
     }
   }
 

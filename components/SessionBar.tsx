@@ -1,7 +1,8 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { formatDuration, useSession, useStageClock } from '@/lib/session/store'
+import { formatDuration, stageElapsed, useSession, useStageClock } from '@/lib/session/store'
+import { sealRecord } from '@/lib/session/record'
 
 /**
  * The session strip above the interview room.
@@ -29,6 +30,21 @@ export function SessionBar() {
     if (!next) return
     goToStage(index)
     router.push(next.source === 'question' ? `/question/${next.slug}` : `/interview/${next.slug}`)
+  }
+
+  /**
+   * Ends the session and goes to the report.
+   *
+   * The clock has to be read *before* `finish()` clears the session, because
+   * per-round timing is the one thing the evidence record cannot reconstruct on
+   * its own — it does not know about pauses or revisited stages.
+   */
+  const end = () => {
+    sealRecord(
+      Object.fromEntries(session.stages.map((s, i) => [s.slug, stageElapsed(session, i)])),
+    )
+    finish()
+    router.push('/report')
   }
 
   return (
@@ -99,13 +115,10 @@ export function SessionBar() {
         {isLast ? (
           <button
             type="button"
-            onClick={() => {
-              finish()
-              router.push('/')
-            }}
+            onClick={end}
             className="rounded bg-surface-3 px-2.5 py-0.5 text-[11px] text-ink-0 transition-opacity hover:opacity-80"
           >
-            End session
+            End &amp; get report
           </button>
         ) : (
           <button

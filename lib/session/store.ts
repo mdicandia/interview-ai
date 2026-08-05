@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import type { BuiltSession, ResolvedStage } from './build'
+import { beginRecord } from './record'
 
 /**
  * The active session, persisted to localStorage.
@@ -67,6 +68,9 @@ export function startSession(session: BuiltSession): SessionState {
     startedAt: Date.now(),
   }
   write(state)
+  // Starting a session discards the previous session's evidence. The report from
+  // it, if one was generated, has already been read by then.
+  beginRecord(session.name)
   return state
 }
 

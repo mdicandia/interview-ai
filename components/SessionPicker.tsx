@@ -6,6 +6,7 @@ import type { CatalogueEntry } from '@/lib/session/catalogue'
 import { buildCustomSession, buildSession } from '@/lib/session/build'
 import { SESSION_TEMPLATES, templateMinutes } from '@/lib/session/templates'
 import { startSession, useSession } from '@/lib/session/store'
+import { hasEvidence, useRecord } from '@/lib/session/record'
 import {
   DISCUSSION_FORMAT_LABELS,
   VARIANT_LABELS,
@@ -27,6 +28,7 @@ function entryTag(entry: CatalogueEntry): string {
 export function SessionPicker({ catalogue }: { catalogue: CatalogueEntry[] }) {
   const router = useRouter()
   const { session, finish } = useSession()
+  const { record } = useRecord()
   const [mode, setMode] = useState<'templates' | 'custom'>('templates')
   const [picked, setPicked] = useState<string[]>([])
 
@@ -51,8 +53,8 @@ export function SessionPicker({ catalogue }: { catalogue: CatalogueEntry[] }) {
       <header className="mb-8">
         <h1 className="text-xl font-medium text-ink-0">Live coding practice</h1>
         <p className="mt-1.5 text-[13px] text-ink-1">
-          Run a full loop, or pick a single problem. The voice interviewer arrives in a
-          later phase.
+          Run a full loop, or pick a single problem. Talk through it out loud — the
+          interviewer listens, and the report afterwards is built from what you said.
         </p>
       </header>
 
@@ -84,6 +86,29 @@ export function SessionPicker({ catalogue }: { catalogue: CatalogueEntry[] }) {
             className="shrink-0 rounded-md border border-surface-3 px-3 py-1.5 text-[12px] text-ink-2 hover:text-ink-0"
           >
             Discard
+          </button>
+        </div>
+      )}
+
+      {/*
+        Offered whenever there is evidence to report on, session or not. A single
+        problem opened directly never passes through "End & get report", and that
+        is the most common way to practise one round.
+      */}
+      {!session && hasEvidence(record) && (
+        <div className="mb-8 flex items-center gap-3 rounded-lg border border-surface-3 bg-surface-1 px-4 py-3">
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] text-ink-0">Your last session is unreported</div>
+            <div className="truncate text-[11.5px] text-ink-2">
+              {record!.rounds.map((r) => r.title).join(' · ')}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => router.push('/report')}
+            className="shrink-0 rounded-md border border-accent-dim px-3 py-1.5 text-[12px] text-accent hover:bg-accent-dim/10"
+          >
+            See the report
           </button>
         </div>
       )}

@@ -13,7 +13,16 @@ import {
 } from '@/lib/problems/types'
 import { RuntimeClient, type RuntimeStatus } from '@/lib/runtime/client'
 import type { RunSummary, TestResult } from '@/lib/runtime/protocol'
-import type { VoiceClient } from '@/lib/client/voice'
+import type { TranscriptLine, VoiceClient } from '@/lib/client/voice'
+import { useSession } from '@/lib/session/store'
+import {
+  enterRound,
+  recordFiles,
+  recordHint,
+  recordRun,
+  recordTranscript,
+  type RoundMeta,
+} from '@/lib/session/record'
 import { Editor } from './Editor'
 import { SessionBar } from './SessionBar'
 import { VoicePanel } from './VoicePanel'
@@ -155,18 +164,73 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
     [files, drafts, language],
   )
 
-  const onHint = useCallback((hint: Hint) => {
-    voiceRef.current?.noteHint(hint.level, hint.text)
-  }, [])
+  /* ------------------------------------------------------------- the record */
 
-  const reportToInterviewer = useCallback((result: RunSummary) => {
-    voiceRef.current?.sendTestResults({
-      passed: result.passed,
-      total: result.total,
-      failing: result.results.filter((r) => r.status !== 'pass').map((r) => r.name),
-      compileError: result.compileError,
-    })
-  }, [])
+  // Everything observable here — the code, the runs, the hints, the transcript —
+  // is accumulated for the post-session report. The voice server sees only the
+  // conversation, and may never be connected at all, so this side owns it.
+  const { session } = useSession()
+  const stage = session?.stages.find((s) => s.slug === problem.slug)
+
+  const meta: RoundMeta = useMemo(
+    () => ({
+      slug: problem.slug,
+      title: problem.title,
+      source: 'problem',
+      label: stage?.label ?? 'Coding',
+      language,
+      allottedMs: (stage?.minutes ?? 0) * 60_000,
+    }),
+    [problem.slug, problem.title, stage?.label, stage?.minutes, language],
+  )
+
+  useEffect(() => {
+    enterRound(meta)
+  }, [meta])
+
+  // Debounced well past a keystroke: this serialises the whole record, and only
+  // the final state of the code matters to the report.
+  useEffect(() => {
+    const timer = setTimeout(() => recordFiles(meta, currentFiles), 1500)
+    return () => clearTimeout(timer)
+  }, [meta, currentFiles])
+
+  const onTranscript = useCallback(
+    (lines: TranscriptLine[]) =>
+      recordTranscript(
+        meta,
+        lines.map(({ role, text, at }) => ({ role, text, at })),
+      ),
+    [meta],
+  )
+
+  const onHint = useCallback(
+    (hint: Hint) => {
+      voiceRef.current?.noteHint(hint.level, hint.text)
+      recordHint(meta, { level: hint.level, text: hint.text, at: Date.now() })
+    },
+    [meta],
+  )
+
+  const reportToInterviewer = useCallback(
+    (result: RunSummary) => {
+      const failing = result.results.filter((r) => r.status !== 'pass').map((r) => r.name)
+      voiceRef.current?.sendTestResults({
+        passed: result.passed,
+        total: result.total,
+        failing,
+        compileError: result.compileError,
+      })
+      recordRun(meta, {
+        at: Date.now(),
+        passed: result.passed,
+        total: result.total,
+        failing,
+        compileError: result.compileError,
+      })
+    },
+    [meta],
+  )
 
   const run = useCallback(async () => {
     if (running) return
@@ -437,6 +501,7 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
                   activePath={activePath}
                   onRunTests={run}
                   clientRef={(client) => { voiceRef.current = client }}
+                  onTranscript={onTranscript}
                 />
               </div>
               <div className={`min-h-0 flex-1 ${assistTab === 'hints' ? '' : 'hidden'}`}>

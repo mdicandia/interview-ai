@@ -1,10 +1,12 @@
 'use client'
 
 import Link from 'next/link'
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { ClientQuestion } from '@/questions'
 import { DISCUSSION_FORMAT_LABELS } from '@/lib/problems/types'
+import { useSession } from '@/lib/session/store'
+import { enterRound } from '@/lib/session/record'
 import { Editor } from './Editor'
 import { SessionBar } from './SessionBar'
 
@@ -24,6 +26,28 @@ export function QuestionRoom({ question }: { question: ClientQuestion }) {
   const files = question.context ?? []
   const [activePath, setActivePath] = useState(files[0]?.path ?? '')
   const activeFile = files.find((f) => f.path === activePath) ?? files[0]
+
+  // Registered in the record even though nothing is captured here: there is no
+  // interviewer on this screen yet, so the round has no transcript and no code.
+  // Recording it anyway is what lets the report say "you were asked this and
+  // there is no evidence of your answer" instead of quietly omitting the round.
+  const { session } = useSession()
+  const stage = session?.stages.find((s) => s.slug === question.slug)
+  const meta = useMemo(
+    () => ({
+      slug: question.slug,
+      title: question.title,
+      source: 'question' as const,
+      label: stage?.label ?? 'Discussion',
+      language: null,
+      allottedMs: (stage?.minutes ?? question.expectedMinutes) * 60_000,
+    }),
+    [question.slug, question.title, question.expectedMinutes, stage?.label, stage?.minutes],
+  )
+
+  useEffect(() => {
+    enterRound(meta)
+  }, [meta])
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-surface-0">

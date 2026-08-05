@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useSyncExternalStore } from 'react'
 import type { Language } from '@/lib/problems/types'
-import { VoiceClient, type VoiceSnapshot } from '@/lib/client/voice'
+import { VoiceClient, type TranscriptLine, type VoiceSnapshot } from '@/lib/client/voice'
 import type { TurnState } from '@/server/protocol'
 
 const VOICE_URL = process.env.NEXT_PUBLIC_VOICE_SERVER_URL ?? 'ws://localhost:8787'
@@ -30,6 +30,8 @@ export interface VoicePanelProps {
   /** Called when the interviewer asks for the tests to be run. */
   onRunTests: () => void
   clientRef?: (client: VoiceClient | null) => void
+  /** Settled transcript, for the post-session report. Interim lines are excluded. */
+  onTranscript?: (lines: TranscriptLine[]) => void
 }
 
 export function VoicePanel({
@@ -39,6 +41,7 @@ export function VoicePanel({
   activePath,
   onRunTests,
   clientRef,
+  onTranscript,
 }: VoicePanelProps) {
   const ref = useRef<VoiceClient | null>(null)
   const getClient = () => (ref.current ??= new VoiceClient())
@@ -61,6 +64,14 @@ export function VoicePanel({
     clientRef?.(client)
     return () => clientRef?.(null)
   }, [client, clientRef])
+
+  // Only final lines reach the record. An interim line is a guess that will be
+  // replaced, and a report quoting one would be citing something never said.
+  useEffect(() => {
+    if (!onTranscript) return
+    const final = snapshot.transcript.filter((line) => line.final)
+    if (final.length > 0) onTranscript(final)
+  }, [onTranscript, snapshot.transcript])
 
   // Push the code to the interviewer, debounced. It only needs to be roughly
   // current — a keystroke-accurate view would mean a message per character.

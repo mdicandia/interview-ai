@@ -10,8 +10,10 @@ A local, single-user tool for practising **live coding interviews**: a voice
 interviewer talking to you while you write code in a shared editor. Build plan and
 phase breakdown: `~/.claude/plans/can-we-develop-something-wobbly-lamport.md`.
 
-Status: **editor + execution complete, for both problem kinds.**
-No voice, no interviewer, no report yet — nothing in this repo calls an LLM.
+Status: **editor, execution, voice interviewer, hints and the post-session report
+all work.** Still missing: interviewer tool use (`run-tests` is declared and never
+sent), backchannel clips, an interviewer on discussion rounds, and socket
+reconnection.
 
 ## Three execution paths
 
@@ -48,13 +50,25 @@ certifying an environment the candidate never runs in.
 DeepSeek's context caching is automatic but matches only from token 0, and a cache
 hit is ~50× cheaper than a miss. Never interpolate a timestamp, session id, or the
 current editor contents into that prefix — volatile content goes *after* the
-conversation history. (Not built yet.)
+conversation history. See `server/interview/prompt.ts`.
+
+**4. The report's evidence is accumulated in the browser, not the voice server.**
+`InterviewSession` holds the transcript, but *only* that — the code, the test runs,
+the hints and the timings live on the client, and the voice server may never have
+been connected at all. A round worked through in silence is a normal way to
+practise, and a server-built report would produce nothing for it. So the browser
+appends to `lib/session/record.ts` as things happen and POSTs the record to
+`/api/report`, which re-loads the problems server-side. That route is the only
+place reference solutions, reference patches and `expectedPoints` are ever read —
+they are what let the report judge code rather than describe it, and they still
+reach no served file. There is deliberately no `report` message on the socket.
 
 ## Commands
 
 ```bash
 pnpm dev               # UI on :3000
 pnpm verify:problems   # reference solutions pass, starter code fails — both runtimes
+pnpm verify:report     # the report separates content from delivery, and cites real quotes
 pnpm typecheck
 pnpm lint
 pnpm copy-assets       # re-copy Pyodide/esbuild WASM into public/ (also runs postinstall)
@@ -72,4 +86,8 @@ pnpm copy-assets       # re-copy Pyodide/esbuild WASM into public/ (also runs po
   rubrics are the durable part and are verified structurally today.
 - `lib/runtime/` — worker protocol, comparison, and the supervising client.
 - `public/workers/` — the two execution workers. See constraint 1.
-- `server/` — voice pipeline and interviewer orchestration (Phase 2+, empty for now).
+- `lib/session/` — session templates and the timer (`store.ts`), plus the evidence
+  record the report is built from (`record.ts`). See constraint 4.
+- `server/pipeline/` — STT, TTS, the sentence splitter, and the `LLMProvider`.
+- `server/interview/` — the frozen-prefix prompt builder, the turn state machine,
+  the hint ladder, and `report.ts`.

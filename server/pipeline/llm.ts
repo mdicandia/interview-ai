@@ -98,6 +98,13 @@ export interface LLMProvider {
      * give it a budget with room for both halves.
      */
     thinking?: boolean
+    /**
+     * Constrains the reply to a single JSON object.
+     *
+     * The prompt still has to describe the schema — this only guarantees the
+     * response parses, not that it has the right keys. Callers must validate.
+     */
+    json?: boolean
   }): Promise<string>
 }
 
@@ -219,12 +226,13 @@ export function createDeepSeekProvider(apiKey: string): LLMProvider {
       return { text: text(), usage }
     },
 
-    async complete({ messages, maxTokens = 4000, thinking = false }) {
+    async complete({ messages, maxTokens = 4000, thinking = false, json: jsonMode = false }) {
       const response = await post({
         model: REPORT_MODEL,
         stream: false,
         max_tokens: maxTokens,
         ...(thinking ? {} : { thinking: { type: 'disabled' } }),
+        ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
         messages,
       })
       if (!response.ok) {

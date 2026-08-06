@@ -3,16 +3,21 @@
 /**
  * Main-thread wiring for the two audio worklets.
  *
- * One AudioContext at 16kHz drives both: the browser resamples the microphone
- * into it and the speakers out of it, so nothing downstream has to know the
- * hardware rate. Requesting the context at the target rate is also the one place
- * where the resampling is free.
+ * One AudioContext drives both, and it runs at the *playback* rate. Interviewer
+ * audio is copied sample-for-sample into the output, so the context must match
+ * what the speech model produces or the voice comes out at the wrong pitch. The
+ * microphone side is indifferent: the browser resamples the hardware into the
+ * context, and the capture worklet resamples the context down to the 16kHz
+ * Deepgram wants, whatever rate it finds itself at.
  */
+
+import { AUDIO_SAMPLE_RATE, PLAYBACK_SAMPLE_RATE } from '@/server/protocol'
 
 const CAPTURE_MODULE = '/worklets/capture.worklet.js'
 const PLAYBACK_MODULE = '/worklets/playback.worklet.js'
 
-export const SAMPLE_RATE = 16_000
+/** What leaves the microphone, after the capture worklet resamples it. */
+export const SAMPLE_RATE = AUDIO_SAMPLE_RATE
 
 export interface AudioSessionEvents {
   /** A 20ms PCM16 frame from the microphone, ready for the wire. */
@@ -55,7 +60,16 @@ export class AudioSession {
     })
     this.#stream = stream
 
-    const context = new AudioContext({ sampleRate: SAMPLE_RATE })
+    /*
+     * The context runs at the *playback* rate, not the microphone's.
+     *
+     * Interviewer audio arrives at 24kHz and the worklet copies samples into the
+     * output one for one, so the context has to match or the voice plays at the
+     * wrong pitch. The capture side is unaffected: its worklet resamples from
+     * whatever `sampleRate` happens to be down to the 16kHz Deepgram wants, so
+     * it follows this automatically.
+     */
+    const context = new AudioContext({ sampleRate: PLAYBACK_SAMPLE_RATE })
     this.#context = context
     // Safari in particular hands back a suspended context even from a gesture.
     if (context.state === 'suspended') await context.resume()

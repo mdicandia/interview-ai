@@ -1,10 +1,15 @@
 /**
  * Drives a full interview session against the real voice server, with no browser.
  *
- * Cartesia synthesises the candidate's speech, that audio is streamed into the
- * server exactly as a microphone would, and the state transitions, transcript
- * and returned audio are asserted. Then it interrupts mid-reply to check
- * barge-in, which is the one behaviour that cannot be verified any other way.
+ * The local speech model synthesises the candidate's side, that audio is streamed
+ * into the server exactly as a microphone would, and the state transitions,
+ * transcript and returned audio are asserted. Then it interrupts mid-turn to
+ * check barge-in, which is the one behaviour that cannot be verified any other
+ * way.
+ *
+ * Everything except Deepgram and DeepSeek runs locally, so re-running this is
+ * nearly free — which it needs to be, because the interesting failures here are
+ * timing-dependent and you will run it many times.
  *
  * Run with: pnpm verify:server
  */
@@ -14,8 +19,9 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import WebSocket from 'ws'
-import { createTtsClient, DEFAULT_VOICE_ID, SAMPLE_RATE } from '../server/pipeline/tts'
-import type { ClientMessage, ServerMessage, TurnState } from '../server/protocol'
+import { SAMPLE_RATE } from '../server/pipeline/tts'
+import { preloadKokoro } from '../server/pipeline/tts-kokoro'
+import { AUDIO_SAMPLE_RATE, type ClientMessage, type ServerMessage, type TurnState } from '../server/protocol'
 
 const GREEN = '\x1b[32m'
 const RED = '\x1b[31m'
@@ -36,44 +42,53 @@ function check(ok: boolean, label: string, detail = '') {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 /*
- * The candidate's voice is cached on disk, and that is not an optimisation.
+ * The candidate's voice is synthesised locally and cached on disk.
  *
- * This script says the same five sentences every run, and re-synthesising them
- * costs real money each time. A run of this file drained a month's free Cartesia
- * tier during one afternoon of chasing a flaky assertion — the failure was in
- * this harness, so the same fixed sentences were paid for over and over while
- * nothing about them changed.
+ * It used to come from Cartesia, and that drained a month's free tier during one
+ * afternoon of chasing a flaky assertion in this very file — the same five fixed
+ * sentences, re-synthesised and paid for on every retry, while nothing about
+ * them changed. Now the whole suite costs nothing to run, which is the property
+ * a test you re-run twenty times needs to have.
  *
- * The cache is keyed by the text itself, so editing a line re-synthesises only
- * that line. It is gitignored: audio does not belong in the repo, and a fresh
- * clone paying once is the right trade.
+ * A different voice from the interviewer's, so a transcript that mixes up who
+ * said what is obvious rather than plausible.
  */
 const SPEECH_CACHE = join(process.cwd(), '.cache', 'speech')
+const CANDIDATE_VOICE = 'af_heart'
 
-/** Characters actually sent to Cartesia by this run. */
-let charactersSynthesised = 0
+/**
+ * Kokoro emits 24kHz; the microphone side of the wire is 16kHz.
+ *
+ * Linear interpolation with no low-pass, which would be sloppy for something
+ * anyone listens to. Nothing does — this feeds a speech recogniser, which is
+ * robust to far worse, and the alternative is a filter to maintain in a test.
+ */
+function resampleForMicrophone(samples: Float32Array, fromRate: number): Buffer {
+  const ratio = fromRate / AUDIO_SAMPLE_RATE
+  const count = Math.floor(samples.length / ratio)
+  const pcm = Buffer.allocUnsafe(count * 2)
+  for (let i = 0; i < count; i += 1) {
+    const position = i * ratio
+    const index = Math.floor(position)
+    const fraction = position - index
+    const current = samples[index] ?? 0
+    const next = samples[index + 1] ?? current
+    const value = Math.max(-1, Math.min(1, current + (next - current) * fraction))
+    pcm.writeInt16LE(Math.round(value < 0 ? value * 0x8000 : value * 0x7fff), i * 2)
+  }
+  return pcm
+}
 
 async function speechFor(text: string): Promise<Buffer> {
-  const key = createHash('sha256').update(`${DEFAULT_VOICE_ID}:${text}`).digest('hex').slice(0, 16)
+  const key = createHash('sha256').update(`${CANDIDATE_VOICE}:${text}`).digest('hex').slice(0, 16)
   const cached = join(SPEECH_CACHE, `${key}.pcm`)
   if (existsSync(cached)) return readFileSync(cached)
 
-  const chunks: Buffer[] = []
-  let done = false
-  const tts = await createTtsClient(process.env.CARTESIA_API_KEY ?? '', {
-    onAudio: (pcm) => chunks.push(pcm),
-    onDone: () => { done = true },
-    onError: () => { done = true },
-  })
-  tts.speak(text, 'probe')
-  tts.finish('probe')
-  const deadline = Date.now() + 25_000
-  while (!done && Date.now() < deadline) await sleep(40)
-  tts.close()
+  const model = await preloadKokoro()
+  const audio = await model.generate(text, { voice: CANDIDATE_VOICE })
+  const pcm = resampleForMicrophone(audio.audio as Float32Array, audio.sampling_rate)
 
-  const pcm = Buffer.concat(chunks)
   if (pcm.length > 0) {
-    charactersSynthesised += text.length
     mkdirSync(SPEECH_CACHE, { recursive: true })
     writeFileSync(cached, pcm)
   }
@@ -247,6 +262,32 @@ async function main() {
    * has to actually run it. The server has no runtime, so all it can do is emit
    * the request — which is exactly what the browser acts on.
    */
+  /*
+   * The code is updated before the fix is claimed, and that matters.
+   *
+   * Without this the harness says "I think that's fixed now" while the editor
+   * contents the interviewer can see are still the untouched starter — and a
+   * good interviewer challenges the contradiction rather than running anything.
+   * It did exactly that ("what fix did you make?"), and the run_tests check
+   * failed for being a bad scenario rather than a broken tool.
+   */
+  send({
+    type: 'code',
+    activePath: 'retry.py',
+    files: [
+      {
+        path: 'retry.py',
+        content:
+          'import time\n\n\ndef retry(operation, max_attempts=3, base_delay=1.0, sleep=time.sleep):\n' +
+          '    last_error = None\n    for attempt in range(max_attempts):\n        try:\n' +
+          '            return operation()\n        except Exception as exc:\n' +
+          '            last_error = exc\n            if attempt < max_attempts - 1:\n' +
+          '                sleep(base_delay * (2 ** attempt))\n    raise last_error\n',
+      },
+    ],
+  })
+  await sleep(600)
+
   const saidBefore = interviewerSaid.length
   const askToRun = await speechFor("Okay, I think that's fixed now. Can you run the tests?")
   await speakAsCandidate(askToRun, 30)
@@ -530,20 +571,17 @@ async function main() {
   /*
    * What this run cost, printed every time.
    *
-   * This script spends real money on three metered APIs, and that was invisible
-   * until a month's Cartesia allowance disappeared into repeated runs of it. A
-   * number on screen is the difference between "the test is flaky, run it again"
-   * and "the test is flaky, and each retry costs something".
-   *
-   * The interviewer's own speech is not counted here — the server synthesises it
-   * and this process never sees the text — so treat the total as a floor.
+   * Only one metered service is left on this path, and it is the one that bills
+   * wall-clock rather than words — so the number goes up simply by the script
+   * taking longer, which is worth seeing. Speech on both sides is now local and
+   * free; this used to be the line that reported a drained Cartesia allowance
+   * after the fact.
    */
   const audioMinutes = (Date.now() - runStartedAt) / 60_000
   console.log(
-    `\n${DIM}This run: ~${charactersSynthesised} Cartesia credits for candidate speech` +
-      ` (cached clips are free on the next run), ~${audioMinutes.toFixed(1)} min of Deepgram` +
-      ` streaming ≈ $${(audioMinutes * 0.0048).toFixed(3)}, plus the interviewer's own` +
-      ` replies.${RESET}`,
+    `\n${DIM}This run: ~${audioMinutes.toFixed(1)} min of Deepgram streaming` +
+      ` ≈ $${(audioMinutes * 0.0048).toFixed(3)}, plus a few DeepSeek turns.` +
+      ` Speech synthesis was local and free.${RESET}`,
   )
 
   console.log(

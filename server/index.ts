@@ -1,6 +1,7 @@
 import { WebSocketServer, type WebSocket } from 'ws'
 import { getProblem } from '@/problems'
 import { createDeepSeekProvider } from './pipeline/llm'
+import { selectedTtsProvider, warmVoice } from './pipeline/voice'
 import { InterviewSession } from './interview/orchestrator'
 import { isClientMessage, type ClientMessage, type ServerMessage } from './protocol'
 
@@ -32,10 +33,22 @@ function requireKey(name: string): string {
 
 const deepseekKey = requireKey('DEEPSEEK_API_KEY')
 const deepgramKey = requireKey('DEEPGRAM_API_KEY')
-const cartesiaKey = requireKey('CARTESIA_API_KEY')
+
+/**
+ * Only demanded when the hosted voice is actually selected.
+ *
+ * The default interviewer voice runs locally, and refusing to start over a key
+ * that will never be read would be its own kind of bug.
+ */
+const cartesiaKey =
+  selectedTtsProvider() === 'cartesia' ? requireKey('CARTESIA_API_KEY') : (process.env.CARTESIA_API_KEY ?? '')
 
 const llm = createDeepSeekProvider(deepseekKey)
 const server = new WebSocketServer({ port: PORT })
+
+// Started now rather than on the first session, so the ~17s cold load of the
+// speech model does not land on whoever presses "Start interview" first.
+warmVoice()
 
 server.on('connection', (socket: WebSocket) => {
   let session: InterviewSession | null = null

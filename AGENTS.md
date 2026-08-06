@@ -51,7 +51,16 @@ hit is ~50× cheaper than a miss. Never interpolate a timestamp, session id, or 
 current editor contents into that prefix — volatile content goes *after* the
 conversation history. See `server/interview/prompt.ts`.
 
-**4. A TTS context id is good for exactly one turn.**
+**4. Capture and playback run at different sample rates, on purpose.**
+`AUDIO_SAMPLE_RATE` is 16kHz (browser → server, what Deepgram wants).
+`PLAYBACK_SAMPLE_RATE` is 24kHz (server → browser, what Kokoro produces
+natively). Every resample is quality lost or filter code to get wrong, so each
+direction runs at its own master's rate and nothing converts. The capture worklet
+resamples from whatever the AudioContext is at down to 16kHz by itself, so it
+follows automatically — but `CAPACITY` in `public/worklets/playback.worklet.js`
+is hard-coded to two seconds at 24kHz and cannot import the constant.
+
+**5. A TTS context id is good for exactly one turn.**
 `tts.finish()` sends `continue: false`, which closes the context at Cartesia
 permanently. Reusing the id on the next turn is rejected with "Context has closed
 and is no longer accepting new inputs" — and it fails silently in the worst way:
@@ -59,7 +68,7 @@ the transcript keeps streaming, so the interviewer looks like it is talking whil
 no audio comes out. `#respond` increments the counter on every turn, not only on
 barge-in.
 
-**5. The report's evidence is accumulated in the browser, not the voice server.**
+**6. The report's evidence is accumulated in the browser, not the voice server.**
 `InterviewSession` holds the transcript, but *only* that — the code, the test runs,
 the hints and the timings live on the client, and the voice server may never have
 been connected at all. A round worked through in silence is a normal way to
@@ -81,7 +90,7 @@ pnpm verify:server     # a real spoken session: turn machine, tool use, barge-in
 pnpm typecheck
 pnpm lint
 pnpm copy-assets       # re-copy Pyodide/esbuild WASM into public/ (also runs postinstall)
-pnpm gen:backchannels  # re-synthesise the "mm-hm" clips (they are committed; rarely needed)
+pnpm gen:backchannels  # re-synthesise the "mm-hm" clips — required after changing the voice
 ```
 
 ## Layout
@@ -97,10 +106,16 @@ pnpm gen:backchannels  # re-synthesise the "mm-hm" clips (they are committed; ra
 - `lib/runtime/` — worker protocol, comparison, and the supervising client.
 - `public/workers/` — the two execution workers. See constraint 1.
 - `lib/session/` — session templates and the timer (`store.ts`), plus the evidence
-  record the report is built from (`record.ts`). See constraint 4.
-- `server/pipeline/` — STT, TTS, the sentence splitter, and the `LLMProvider`.
-- `server/backchannel/` — committed "mm-hm" clips that cover the model's ~1.1s
-  time-to-first-token. Measured: median gap after the candidate stops talking
-  drops from ~1.5s to ~490ms. Regenerate with `pnpm gen:backchannels`.
+  record the report is built from (`record.ts`). See constraint 6.
+- `server/pipeline/` — STT, the sentence splitter, the `LLMProvider`, and two
+  text-to-speech implementations behind one interface (`voice.ts` picks). The
+  default is local: Kokoro, an 82M Apache-2.0 model on the CPU, no key and no
+  per-character cost. Measured on this machine: fp32 reaches first audio in
+  ~550ms and runs at 4x realtime — and fp32 is *twice as fast as q8*, because
+  int8 has no accelerated kernel here.
+- `server/backchannel/` — committed "mm-hm" clips that cover the gap while the
+  model thinks. Measured: median gap after the candidate stops talking drops from
+  ~1.5s to ~490ms. They are the same speaker as the interviewer, so regenerate
+  them whenever the voice changes.
 - `server/interview/` — the frozen-prefix prompt builder, the turn state machine,
   the hint ladder, and `report.ts`.

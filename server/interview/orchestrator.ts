@@ -4,7 +4,8 @@ import { INTERVIEWER_TOOLS, parseObservation, type Observation } from './tools'
 import { loadBackchannels, type Backchannel } from './backchannel'
 import { SentenceSplitter } from '../pipeline/sentences'
 import { createSttClient, type SttClient } from '../pipeline/stt'
-import { createTtsClient, type TtsClient } from '../pipeline/tts'
+import type { TtsClient } from '../pipeline/tts'
+import { createVoice } from '../pipeline/voice'
 import type { ServerMessage, TurnState } from '../protocol'
 import {
   buildFrozenPrefix,
@@ -109,7 +110,7 @@ export class InterviewSession {
   }
 
   async start(): Promise<void> {
-    this.#tts = await createTtsClient(this.#config.cartesiaKey, {
+    this.#tts = await createVoice({
       onAudio: (pcm, contextId) => {
         // Audio for a superseded turn can still be in flight after barge-in.
         if (contextId !== this.#currentContext()) return
@@ -123,7 +124,7 @@ export class InterviewSession {
         }
       },
       onError: (error) => this.#config.send({ type: 'error', message: error.message, fatal: false }),
-    })
+    }, this.#config.cartesiaKey)
 
     this.#stt = await createSttClient(this.#config.deepgramKey, {
       onSpeechStarted: () => this.#onSpeechStarted(),

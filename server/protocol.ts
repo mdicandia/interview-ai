@@ -14,7 +14,26 @@ import type { Language } from '@/lib/problems/types'
  * in JSON would cost bandwidth and CPU for nothing.
  */
 
+/**
+ * Microphone audio, browser → server. Deepgram's rate.
+ *
+ * The capture worklet resamples from whatever the AudioContext is running at
+ * down to this, so it is independent of the playback rate below.
+ */
 export const AUDIO_SAMPLE_RATE = 16_000
+
+/**
+ * Interviewer audio, server → browser. **Deliberately not the same rate.**
+ *
+ * The two directions have different masters. Deepgram wants 16kHz and gains
+ * nothing from more. Kokoro, the local speech model, emits 24kHz natively — and
+ * every resample is either quality lost or filter code to get wrong, on a path
+ * that is already the CPU-heaviest thing the server does.
+ *
+ * So the playback half runs at the model's rate and nothing converts. Cartesia
+ * is asked for 24kHz too, so swapping providers does not change the wire format.
+ */
+export const PLAYBACK_SAMPLE_RATE = 24_000
 
 /** How much audio the browser sends per frame. 20ms is the usual streaming unit. */
 export const FRAME_MS = 20

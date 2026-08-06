@@ -7,7 +7,16 @@
 # sharp and unrs-resolver are optional native builds (Next.js image optimisation
 # and an ESLint resolver). Both fall back to slower pure-JS paths, and neither is
 # needed for a local single-user tool.
+# onnxruntime-node needs its postinstall: it fetches the native ORT binary that
+# runs Kokoro, the local text-to-speech model. Without it transformers.js falls
+# back to WASM, which is several times slower — and the interviewer's voice is on
+# the latency path, so that is the difference between a conversation and a wait.
+#
+# protobufjs only builds a bundled CLI it ships for other consumers; nothing here
+# invokes it, and skipping it costs nothing.
 allowBuilds:
   esbuild: true
+  onnxruntime-node: true
+  protobufjs: false
   sharp: false
   unrs-resolver: false

@@ -1,4 +1,5 @@
 import WebSocket from 'ws'
+import { PLAYBACK_SAMPLE_RATE } from '../protocol'
 
 /**
  * Cartesia streaming text-to-speech.
@@ -25,10 +26,13 @@ const MODEL_ID = 'sonic-2'
 export const DEFAULT_VOICE_ID = 'a0e99841-438c-4a64-b679-ae501e7d6091'
 
 /**
- * 16kHz mono PCM throughout the pipeline. Deepgram and the browser worklets use
- * the same rate, so nothing has to resample.
+ * Cartesia is asked for the same rate the local model produces.
+ *
+ * Not the microphone's rate — see `PLAYBACK_SAMPLE_RATE` in protocol.ts. Keeping
+ * both TTS providers on one output rate is what lets them be swapped without
+ * touching the browser.
  */
-export const SAMPLE_RATE = 16_000
+export const SAMPLE_RATE = PLAYBACK_SAMPLE_RATE
 
 export interface TtsEvents {
   /** Raw PCM16 for the browser to queue. */

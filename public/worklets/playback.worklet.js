@@ -13,9 +13,14 @@
  * here, the interviewer keeps talking over the candidate for that full second.
  */
 
-// Two seconds at 16kHz. Large enough to ride out network jitter, small enough
-// that a flush never has much to throw away.
-const CAPACITY = 32000
+// Two seconds at the 24kHz playback rate. Large enough to ride out network
+// jitter, small enough that a flush never has much to throw away.
+//
+// Tied to PLAYBACK_SAMPLE_RATE in server/protocol.ts, which this file cannot
+// import — worklets are served as plain JS from /public and resolve nothing from
+// the build. If that rate changes, change this too, or the buffer silently
+// becomes a different number of seconds.
+const CAPACITY = 48000
 
 class PlaybackProcessor extends AudioWorkletProcessor {
   constructor() {

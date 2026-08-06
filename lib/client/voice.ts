@@ -21,6 +21,13 @@ export interface TranscriptLine {
   at: number
 }
 
+export interface Observation {
+  note: string
+  axis: 'content' | 'delivery'
+  significance: 'strength' | 'concern'
+  at: number
+}
+
 export interface VoiceSnapshot {
   status: 'idle' | 'connecting' | 'live' | 'error'
   turn: TurnState
@@ -28,6 +35,14 @@ export interface VoiceSnapshot {
   speaking: boolean
   muted: boolean
   transcript: TranscriptLine[]
+  /**
+   * Moments the interviewer flagged for the report.
+   *
+   * Deliberately not rendered anywhere in the interview room. Seeing the
+   * interviewer's private notes appear live would change how you behave for the
+   * rest of the round, which is exactly what a practice run must not do.
+   */
+  observations: Observation[]
   error: string | null
 }
 
@@ -37,6 +52,7 @@ const INITIAL: VoiceSnapshot = {
   speaking: false,
   muted: false,
   transcript: [],
+  observations: [],
   error: null,
 }
 
@@ -71,7 +87,7 @@ export class VoiceClient {
     language: Language
   }): Promise<void> {
     if (this.#socket) return
-    this.#update({ status: 'connecting', error: null, transcript: [] })
+    this.#update({ status: 'connecting', error: null, transcript: [], observations: [] })
 
     // Microphone first: if permission is refused there is no point opening a
     // socket, and the failure is much clearer this way round.
@@ -159,6 +175,14 @@ export class VoiceClient {
       case 'run-tests':
         this.#onRunTests?.()
         break
+
+      case 'observation': {
+        const { note, axis, significance, at } = message
+        this.#update({
+          observations: [...this.#snapshot.observations, { note, axis, significance, at }],
+        })
+        break
+      }
 
       case 'error':
         this.#update(

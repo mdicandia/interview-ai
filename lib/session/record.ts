@@ -48,6 +48,20 @@ export interface HintRecord {
   at: number
 }
 
+/**
+ * A moment the interviewer flagged at the time, via `note_observation`.
+ *
+ * Worth more to the report than anything reconstructed afterwards: it is the
+ * interviewer's own judgement, formed while the round was still running and
+ * before it knew how things turned out.
+ */
+export interface ObservationRecord {
+  note: string
+  axis: 'content' | 'delivery'
+  significance: 'strength' | 'concern'
+  at: number
+}
+
 export interface RoundRecord {
   slug: string
   title: string
@@ -64,6 +78,7 @@ export interface RoundRecord {
   transcript: TranscriptLine[]
   hints: HintRecord[]
   runs: RunRecord[]
+  observations: ObservationRecord[]
   /** Editor contents as they stood last time anything was recorded. */
   files: { path: string; content: string }[]
 }
@@ -140,10 +155,14 @@ function mutate(
       transcript: [],
       hints: [],
       runs: [],
+      observations: [],
       files: [],
     }
     record.rounds.push(round)
   } else {
+    // A record written before a field existed is still in someone's
+    // localStorage; backfill rather than letting `.length` throw on it.
+    round.observations ??= []
     // Language can change mid-round, and a directly-opened problem picks up its
     // label and allotment only once a session takes it over.
     round.language = meta.language
@@ -191,6 +210,18 @@ export function recordTranscript(meta: RoundMeta, lines: TranscriptLine[]): void
   })
 }
 
+/**
+ * Replaces the round's observations wholesale, mirroring the voice client.
+ *
+ * Same reasoning as the transcript: the client holds the authoritative list, and
+ * appending from here would double up every time React re-runs the effect.
+ */
+export function recordObservations(meta: RoundMeta, observations: ObservationRecord[]): void {
+  mutate(meta, (round) => {
+    round.observations = observations
+  })
+}
+
 export function recordHint(meta: RoundMeta, hint: HintRecord): void {
   mutate(meta, (round) => {
     round.hints.push(hint)
@@ -235,7 +266,12 @@ export function clearRecord(): void {
 export function hasEvidence(record: SessionRecord | null): boolean {
   if (!record) return false
   return record.rounds.some(
-    (r) => r.transcript.length > 0 || r.runs.length > 0 || r.hints.length > 0 || r.files.length > 0,
+    (r) =>
+      r.transcript.length > 0 ||
+      r.runs.length > 0 ||
+      r.hints.length > 0 ||
+      r.files.length > 0 ||
+      (r.observations?.length ?? 0) > 0,
   )
 }
 

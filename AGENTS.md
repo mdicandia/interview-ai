@@ -10,10 +10,9 @@ A local, single-user tool for practising **live coding interviews**: a voice
 interviewer talking to you while you write code in a shared editor. Build plan and
 phase breakdown: `~/.claude/plans/can-we-develop-something-wobbly-lamport.md`.
 
-Status: **editor, execution, voice interviewer, hints and the post-session report
-all work.** Still missing: interviewer tool use (`run-tests` is declared and never
-sent), backchannel clips, an interviewer on discussion rounds, and socket
-reconnection.
+Status: **editor, execution, voice interviewer with tool use, hints and the
+post-session report all work.** Still missing: backchannel clips, an interviewer
+on discussion rounds, and socket reconnection.
 
 ## Three execution paths
 
@@ -52,7 +51,15 @@ hit is ~50× cheaper than a miss. Never interpolate a timestamp, session id, or 
 current editor contents into that prefix — volatile content goes *after* the
 conversation history. See `server/interview/prompt.ts`.
 
-**4. The report's evidence is accumulated in the browser, not the voice server.**
+**4. A TTS context id is good for exactly one turn.**
+`tts.finish()` sends `continue: false`, which closes the context at Cartesia
+permanently. Reusing the id on the next turn is rejected with "Context has closed
+and is no longer accepting new inputs" — and it fails silently in the worst way:
+the transcript keeps streaming, so the interviewer looks like it is talking while
+no audio comes out. `#respond` increments the counter on every turn, not only on
+barge-in.
+
+**5. The report's evidence is accumulated in the browser, not the voice server.**
 `InterviewSession` holds the transcript, but *only* that — the code, the test runs,
 the hints and the timings live on the client, and the voice server may never have
 been connected at all. A round worked through in silence is a normal way to
@@ -69,6 +76,8 @@ reach no served file. There is deliberately no `report` message on the socket.
 pnpm dev               # UI on :3000
 pnpm verify:problems   # reference solutions pass, starter code fails — both runtimes
 pnpm verify:report     # the report separates content from delivery, and cites real quotes
+pnpm verify:tools      # tool dispatch, against a stubbed model — no network, deterministic
+pnpm verify:server     # a real spoken session: turn machine, tool use, barge-in
 pnpm typecheck
 pnpm lint
 pnpm copy-assets       # re-copy Pyodide/esbuild WASM into public/ (also runs postinstall)

@@ -30,11 +30,29 @@
  * ---------------------------------------------------------------------------
  */
 
-export type Role = 'system' | 'user' | 'assistant'
+export type Role = 'system' | 'user' | 'assistant' | 'tool'
 
 export interface Message {
   role: Role
   content: string
+  /** Set on an assistant message that asked for tools. */
+  toolCalls?: ToolCall[]
+  /** Set on a tool message, matching the call it answers. */
+  toolCallId?: string
+}
+
+/** A function the model may ask to have run. `parameters` is a JSON schema. */
+export interface ToolSpec {
+  name: string
+  description: string
+  parameters: Record<string, unknown>
+}
+
+export interface ToolCall {
+  id: string
+  name: string
+  /** Raw JSON text. Models emit malformed arguments, so callers must parse defensively. */
+  arguments: string
 }
 
 export interface StreamOptions {
@@ -62,6 +80,20 @@ export interface StreamOptions {
   maxTokens?: number
   /** Aborting mid-stream is how barge-in stops the interviewer talking. */
   signal?: AbortSignal
+  /**
+   * Functions the interviewer may call. Measured on 2026-08-05, v4-flash with
+   * `thinking: { type: 'disabled' }`: tool calling works on the streaming path
+   * and no reasoning leaks. Two behaviours that matter for the caller —
+   *
+   * 1. A tool call can arrive with **no content at all** (`finish_reason:
+   *    'tool_calls'`, empty text). The turn then produces nothing audible, so a
+   *    follow-up generation is mandatory or the state machine sits in `thinking`.
+   * 2. Content and a tool call can also arrive **together** in one response,
+   *    which costs nothing extra: 1133ms to first token, the same as a plain
+   *    turn. The silent-call path costs 1720ms and then another ~1100ms for the
+   *    follow-up. Prompting for the combined shape is worth ~1.5s.
+   */
+  tools?: ToolSpec[]
 }
 
 export interface Usage {
@@ -75,6 +107,8 @@ export interface StreamResult {
   text: AsyncIterable<string>
   /** Resolves once the stream ends. Absent if the request was aborted. */
   usage: Promise<Usage | null>
+  /** Tools the model asked for. Resolves once `text` is fully consumed. */
+  toolCalls: Promise<ToolCall[]>
 }
 
 export interface LLMProvider {
@@ -115,8 +149,21 @@ const LIVE_MODEL = 'deepseek-v4-flash'
 /** Stronger model for the report, where a slow, considered answer is fine. */
 const REPORT_MODEL = 'deepseek-v4-pro'
 
+interface DeepSeekToolCallDelta {
+  /** Which call this fragment belongs to; arguments stream in across chunks. */
+  index?: number
+  id?: string
+  function?: { name?: string; arguments?: string }
+}
+
 interface DeepSeekDelta {
-  choices?: { delta?: { content?: string | null; reasoning_content?: string | null } }[]
+  choices?: {
+    delta?: {
+      content?: string | null
+      reasoning_content?: string | null
+      tool_calls?: DeepSeekToolCallDelta[]
+    }
+  }[]
   usage?: {
     prompt_cache_hit_tokens?: number
     prompt_cache_miss_tokens?: number
@@ -152,6 +199,31 @@ async function* readSse(body: ReadableStream<Uint8Array>): AsyncGenerator<DeepSe
   }
 }
 
+/**
+ * Our `Message` shape to the OpenAI-compatible wire shape.
+ *
+ * Kept separate from the interface so tool plumbing stays a provider detail. Note
+ * that an assistant message carrying tool calls sends `content: null` rather than
+ * an empty string when it said nothing — the API rejects a message with neither.
+ */
+function toWire(message: Message): Record<string, unknown> {
+  if (message.role === 'tool') {
+    return { role: 'tool', tool_call_id: message.toolCallId, content: message.content }
+  }
+  if (message.role === 'assistant' && message.toolCalls?.length) {
+    return {
+      role: 'assistant',
+      content: message.content || null,
+      tool_calls: message.toolCalls.map((call) => ({
+        id: call.id,
+        type: 'function',
+        function: { name: call.name, arguments: call.arguments || '{}' },
+      })),
+    }
+  }
+  return { role: message.role, content: message.content }
+}
+
 export function createDeepSeekProvider(apiKey: string): LLMProvider {
   if (!apiKey) {
     throw new Error('DEEPSEEK_API_KEY is not set — add it to .env.local')
@@ -168,7 +240,7 @@ export function createDeepSeekProvider(apiKey: string): LLMProvider {
   return {
     name: 'deepseek',
 
-    async stream({ frozenPrefix, history, maxTokens = 120, signal }) {
+    async stream({ frozenPrefix, history, maxTokens = 120, signal, tools }) {
       const response = await post(
         {
           model: LIVE_MODEL,
@@ -177,7 +249,19 @@ export function createDeepSeekProvider(apiKey: string): LLMProvider {
           // See the header comment: this exact shape is the only one that works.
           thinking: { type: 'disabled' },
           max_tokens: maxTokens,
-          messages: [{ role: 'system', content: frozenPrefix }, ...history],
+          ...(tools?.length
+            ? {
+                tools: tools.map((tool) => ({
+                  type: 'function',
+                  function: {
+                    name: tool.name,
+                    description: tool.description,
+                    parameters: tool.parameters,
+                  },
+                })),
+              }
+            : {}),
+          messages: [{ role: 'system', content: frozenPrefix }, ...history.map(toWire)],
         },
         signal,
       )
@@ -199,9 +283,16 @@ export function createDeepSeekProvider(apiKey: string): LLMProvider {
       const usage = new Promise<Usage | null>((resolve) => {
         resolveUsage = resolve
       })
+      let resolveCalls: (calls: ToolCall[]) => void
+      const toolCalls = new Promise<ToolCall[]>((resolve) => {
+        resolveCalls = resolve
+      })
 
       async function* text(): AsyncGenerator<string> {
         let seen: Usage | null = null
+        // Indexed, not appended: fragments for several calls interleave, and
+        // both the name and the argument JSON arrive a piece at a time.
+        const partial: ToolCall[] = []
         try {
           for await (const chunk of readSse(response.body!)) {
             if (chunk.error) throw new Error(`DeepSeek: ${chunk.error.message}`)
@@ -212,18 +303,35 @@ export function createDeepSeekProvider(apiKey: string): LLMProvider {
                 completionTokens: chunk.usage.completion_tokens ?? 0,
               }
             }
+
+            const delta = chunk.choices?.[0]?.delta
+            for (const fragment of delta?.tool_calls ?? []) {
+              const index = fragment.index ?? 0
+              partial[index] ??= { id: '', name: '', arguments: '' }
+              if (fragment.id) partial[index].id += fragment.id
+              if (fragment.function?.name) partial[index].name += fragment.function.name
+              if (fragment.function?.arguments) {
+                partial[index].arguments += fragment.function.arguments
+              }
+            }
+
             // `reasoning_content` is deliberately dropped rather than spoken.
             // With thinking disabled it should never appear; if a future model
             // default changes, this keeps internal monologue out of the audio.
-            const delta = chunk.choices?.[0]?.delta?.content
-            if (delta) yield delta
+            if (delta?.content) yield delta.content
           }
         } finally {
           resolveUsage(seen)
+          // A half-built call from an aborted stream is worse than none: its
+          // arguments will not parse, and acting on it would run a tool the
+          // model never finished asking for.
+          resolveCalls(
+            signal?.aborted ? [] : partial.filter((call) => call && call.name !== ''),
+          )
         }
       }
 
-      return { text: text(), usage }
+      return { text: text(), usage, toolCalls }
     },
 
     async complete({ messages, maxTokens = 4000, thinking = false, json: jsonMode = false }) {

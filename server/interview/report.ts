@@ -38,6 +38,13 @@ export interface RoundEvidence {
   allottedMs: number
   transcript: { role: 'candidate' | 'interviewer'; text: string; at: number }[]
   hints: { level: number; text: string; at: number }[]
+  /** Moments the interviewer flagged live, via `note_observation`. */
+  observations?: {
+    note: string
+    axis: 'content' | 'delivery'
+    significance: 'strength' | 'concern'
+    at: number
+  }[]
   runs: { at: number; passed: number; total: number; failing: string[]; compileError?: string }[]
   files: { path: string; content: string }[]
   enteredAt: number
@@ -326,6 +333,29 @@ function renderRound(
           ? `${stamp(run.at, enteredAt)} — did not compile: ${run.compileError.split('\n')[0]}`
           : `${stamp(run.at, enteredAt)} — ${run.passed} of ${run.total} passing` +
               (run.failing.length > 0 ? ` (failing: ${run.failing.join(', ')})` : ''),
+      )
+    }
+  }
+
+  /*
+   * The interviewer's own notes, taken while the round was still running.
+   *
+   * These outrank anything reconstructed from the transcript, and are told to
+   * outrank it: they were written before the round's outcome was known, by the
+   * only observer who was actually there. Reading a transcript afterwards makes
+   * everything look inevitable.
+   */
+  const observations = evidence.observations ?? []
+  if (observations.length > 0) {
+    lines.push(
+      '',
+      'WHAT THE INTERVIEWER NOTED AT THE TIME (they never saw these):',
+      'Written live, before the outcome was known. Weigh them above your own reading of',
+      'the transcript, and say so when one of them is the basis for a judgement.',
+    )
+    for (const observation of observations) {
+      lines.push(
+        `${stamp(observation.at, enteredAt)} — [${observation.axis}, ${observation.significance}] ${observation.note}`,
       )
     }
   }

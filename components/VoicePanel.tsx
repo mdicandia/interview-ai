@@ -2,7 +2,12 @@
 
 import { useEffect, useRef, useSyncExternalStore } from 'react'
 import type { Language } from '@/lib/problems/types'
-import { VoiceClient, type TranscriptLine, type VoiceSnapshot } from '@/lib/client/voice'
+import {
+  VoiceClient,
+  type Observation,
+  type TranscriptLine,
+  type VoiceSnapshot,
+} from '@/lib/client/voice'
 import type { TurnState } from '@/server/protocol'
 
 const VOICE_URL = process.env.NEXT_PUBLIC_VOICE_SERVER_URL ?? 'ws://localhost:8787'
@@ -32,6 +37,11 @@ export interface VoicePanelProps {
   clientRef?: (client: VoiceClient | null) => void
   /** Settled transcript, for the post-session report. Interim lines are excluded. */
   onTranscript?: (lines: TranscriptLine[]) => void
+  /**
+   * Moments the interviewer flagged. Passed straight to the record and never
+   * rendered — see the note on `VoiceSnapshot.observations`.
+   */
+  onObservations?: (observations: Observation[]) => void
 }
 
 export function VoicePanel({
@@ -42,6 +52,7 @@ export function VoicePanel({
   onRunTests,
   clientRef,
   onTranscript,
+  onObservations,
 }: VoicePanelProps) {
   const ref = useRef<VoiceClient | null>(null)
   const getClient = () => (ref.current ??= new VoiceClient())
@@ -72,6 +83,10 @@ export function VoicePanel({
     const final = snapshot.transcript.filter((line) => line.final)
     if (final.length > 0) onTranscript(final)
   }, [onTranscript, snapshot.transcript])
+
+  useEffect(() => {
+    if (snapshot.observations.length > 0) onObservations?.(snapshot.observations)
+  }, [onObservations, snapshot.observations])
 
   // Push the code to the interviewer, debounced. It only needs to be roughly
   // current — a keystroke-accurate view would mean a message per character.

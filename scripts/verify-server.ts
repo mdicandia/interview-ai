@@ -94,6 +94,8 @@ async function main() {
   const states: TurnState[] = []
   const interviewerSaid: string[] = []
   const candidateFinals: string[] = []
+  const observations: { note: string; axis: string; significance: string }[] = []
+  let runTestsRequests = 0
   let audioBytes = 0
   let flushes = 0
   let ready = false
@@ -111,6 +113,14 @@ async function main() {
       case 'ready': ready = true; break
       case 'state': states.push(message.turn); break
       case 'flush-audio': flushes++; break
+      case 'run-tests': runTestsRequests++; break
+      case 'observation':
+        observations.push({
+          note: message.note,
+          axis: message.axis,
+          significance: message.significance,
+        })
+        break
       case 'transcript':
         if (message.role === 'interviewer') interviewerSaid.push(message.text)
         else if (message.final) candidateFinals.push(message.text)
@@ -183,41 +193,217 @@ async function main() {
     `${firstAudioAt}ms from start of candidate speech`,
   )
 
+  console.log('\nTool use')
+
+  /*
+   * Two behaviours, driven by speech rather than asserted against a mock.
+   *
+   * The first is the whole point of `run_tests`: asking for the code to be run
+   * has to actually run it. The server has no runtime, so all it can do is emit
+   * the request — which is exactly what the browser acts on.
+   */
+  const saidBefore = interviewerSaid.length
+  const askToRun = await speechFor("Okay, I think that's fixed now. Can you run the tests?")
+  await speakAsCandidate(askToRun, 30)
+
+  // Waits for the speech as well as the request. The model may call the tool
+  // with no content at all, in which case a second generation produces the
+  // words — checking the instant the request lands measures the gap, not the
+  // behaviour.
+  const runDeadline = Date.now() + 25_000
+  while (
+    (runTestsRequests === 0 || interviewerSaid.length === saidBefore) &&
+    Date.now() < runDeadline
+  ) {
+    await sleep(100)
+  }
+  check(runTestsRequests > 0, 'interviewer asks for the tests to be run', `${runTestsRequests} request(s)`)
+  check(
+    interviewerSaid.length > saidBefore,
+    'and says something while doing it',
+    `"${interviewerSaid.slice(saidBefore).join(' ').slice(0, 70)}"`,
+  )
+  await sleep(1500)
+
+  // Closing the loop: the browser reports what happened, and that has to start a
+  // fresh spoken turn rather than vanishing.
+  const beforeResults = interviewerSaid.length
+  send({ type: 'test-results', passed: 5, total: 5, failing: [] })
+  const reactDeadline = Date.now() + 20_000
+  while (interviewerSaid.length === beforeResults && Date.now() < reactDeadline) await sleep(100)
+  check(
+    interviewerSaid.length > beforeResults,
+    'reacts to the results coming back',
+    `"${interviewerSaid.slice(beforeResults).join(' ').slice(0, 70)}"`,
+  )
+  await sleep(2000)
+
+  /*
+   * The second is `note_observation`. Driven by saying something confidently
+   * wrong, which is squarely what the tool description asks it to flag — and,
+   * critically, the note must not be spoken. A candidate who hears "I'm noting
+   * that you got that wrong" is having a different experience entirely.
+   */
+  const beforeNote = interviewerSaid.length
+  // Counted, not tested for emptiness: the interviewer may well have noted
+  // something on an earlier turn, and `observations.length === 0` would then be
+  // false the instant we start waiting — passing the check while measuring the
+  // wrong turn, and cutting the settle short so the reply looks missing.
+  const notesBefore = observations.length
+  const wrongClaim = await speechFor(
+    "Actually the real bug is that three attempts is too many, so I'm going to set max attempts to one and that will fix all of it.",
+  )
+  await speakAsCandidate(wrongClaim, 30)
+
+  // A turn that takes a note is the slow shape: endpointing, then a generation
+  // that returns only a tool call, then a second one to produce speech.
+  const noteDeadline = Date.now() + 30_000
+  while (
+    (observations.length === notesBefore || interviewerSaid.length === beforeNote) &&
+    Date.now() < noteDeadline
+  ) {
+    await sleep(100)
+  }
+  await sleep(2500)
+
+  /*
+   * Reported, not asserted.
+   *
+   * Whether the interviewer takes a note is its own judgement, and it varies:
+   * measured across three runs of this script with an identical prompt, the
+   * count went 1, then 0, then 0. Failing the build on that would be failing on
+   * the model's mood, and the fix would be to keep tuning the prompt until one
+   * run happened to pass — which proves nothing.
+   *
+   * The machinery that must never break is pinned deterministically instead, in
+   * `verify:tools`. This line is here to keep the live rate visible, because a
+   * long run of zeroes is worth knowing about even though one is not.
+   */
+  console.log(
+    `  ${DIM}·${RESET} observations this run: ${observations.length}` +
+      (observations.length > 0
+        ? ` ${DIM}${observations.map((o) => `[${o.axis}/${o.significance}] ${o.note.slice(0, 50)}`).join(' | ')}${RESET}`
+        : ` ${DIM}(discretionary — see verify:tools for the dispatch checks)${RESET}`),
+  )
+
+  /*
+   * Scans everything said in the session, not just the last turn.
+   *
+   * This originally checked only the slice after the note, and that is how a
+   * real bug got through: the interviewer spoke `[Note: the tests pass but the
+   * code shown is the *unfixed* original — ...]` out loud on an earlier turn,
+   * straight into the speech synthesiser, while this check looked at an empty
+   * slice and passed. Anything the interviewer produces is heard.
+   */
+  const everythingSaid = interviewerSaid.join(' ')
+  check(
+    !/\[[^\]]*\]/.test(everythingSaid),
+    'never speaks bracketed meta-text',
+    everythingSaid.match(/\[[^\]]*\]/)?.[0] ?? '',
+  )
+  check(
+    !/\b(note to self|noting that|i'?ll note|for the report|observation)\b/i.test(everythingSaid),
+    'never says out loud that it took a note',
+    everythingSaid.match(/\b(note to self|noting that|i'?ll note|for the report|observation)\b/i)?.[0] ?? '',
+  )
+  check(
+    interviewerSaid.length > beforeNote,
+    'answers the candidate after a claim worth challenging',
+    `"${interviewerSaid.slice(beforeNote).join(' ').slice(0, 70)}"`,
+  )
+
   console.log('\nBarge-in')
 
   // Both clips are synthesised up front. Generating the interruption *after*
   // detecting that the interviewer is speaking takes a Cartesia round trip of a
   // second or more, by which time the reply has often finished — and then there
   // is nothing to interrupt, so the test passes or fails for the wrong reason.
-  const [longPrompt, interruption] = await Promise.all([
-    speechFor('Can you explain in detail how exponential backoff works and why it helps?'),
-    speechFor('Wait, sorry, let me stop you there.'),
-  ])
+  //
+  // Sequentially, not in parallel: the session's own TTS client holds one
+  // Cartesia connection for the whole run, and the account allows two. Two
+  // simultaneous `speechFor` calls make three, and the *server's* synthesis is
+  // what gets rejected — which surfaces as the interviewer mysteriously going
+  // silent rather than as an error in this script.
+  // Three sub-questions on purpose. The interviewer is told to answer in one or
+  // two sentences "unless explicitly asked to explain something", and a reply
+  // that finishes in two seconds leaves nothing to interrupt — the test then
+  // fails for want of a target rather than for want of barge-in.
+  const longPrompt = await speechFor(
+    'Can you explain in detail, step by step, how exponential backoff works, ' +
+      'why it helps an upstream service that is already struggling, and what jitter adds to it?',
+  )
+  // Long enough for Deepgram's voice-activity detector to commit. A one-second
+  // "Sorry, hold on." was tried and never raised SpeechStarted at all — the
+  // shorter clip cuts in faster on paper and simply does not register.
+  const interruption = await speechFor('Wait, sorry, let me stop you there for a second.')
 
-  // Short trailing silence: enough for endpointing to fire, not so much that the
-  // reply is over before we can cut in.
-  await speakAsCandidate(longPrompt, 25)
+  /*
+   * Retried, because a missed attempt is not a failed barge-in.
+   *
+   * The interviewer is told to be brief, so a reply can be over in under two
+   * seconds — less than it takes to stream the interruption in. When that
+   * happens there is nothing to interrupt, and the old single-shot version
+   * reported a barge-in failure when barge-in had never been exercised. Each
+   * attempt now only counts if the reply was still going when we cut in.
+   */
+  let attempts = 0
+  let interrupted = false
+  let caughtSpeaking = false
+  let detail = 'never caught the interviewer mid-reply'
 
-  const speakDeadline = Date.now() + 15_000
-  while (Date.now() < speakDeadline) {
-    if (states[states.length - 1] === 'speaking') break
-    await sleep(30)
+  while (attempts < 3 && !interrupted) {
+    attempts += 1
+
+    /*
+     * A full second of trailing silence, not half.
+     *
+     * `SpeechStarted` is a transition event: Deepgram raises it going from
+     * silence into speech. With only 500ms after the question, the interruption
+     * that follows can be folded into the same speech segment — no transition,
+     * no event, no barge-in, and the flush never fires for a reason that has
+     * nothing to do with the server.
+     *
+     * Waiting longer costs nothing here, because the cut-in is triggered by the
+     * reply starting rather than by a timer.
+     */
+    await speakAsCandidate(longPrompt, 50)
+
+    const speakDeadline = Date.now() + 15_000
+    while (Date.now() < speakDeadline && states[states.length - 1] !== 'speaking') {
+      await sleep(30)
+    }
+    if (states[states.length - 1] !== 'speaking') continue
+
+    const flushesBefore = flushes
+    const audioBefore = audioBytes
+    const statesBefore = states.length
+
+    // Straight in, with no synthesis delay.
+    await speakAsCandidate(interruption, 8)
+    console.log(
+      `    ${DIM}attempt ${attempts}: states ${states.slice(statesBefore).join(' → ') || '(none)'}${RESET}`,
+    )
+
+    // Only a meaningful attempt if the reply had not already ended on its own.
+    if (states[states.length - 1] === 'speaking' || flushes > flushesBefore) {
+      caughtSpeaking = true
+    }
+    await sleep(1500)
+
+    if (flushes > flushesBefore) {
+      interrupted = true
+      detail = `${flushes - flushesBefore} flush(es) on attempt ${attempts}, ${audioBytes - audioBefore} bytes after cut-in`
+    } else if (caughtSpeaking) {
+      detail = `caught it speaking on attempt ${attempts} but no flush followed`
+    }
   }
-  check(states[states.length - 1] === 'speaking', 'interviewer is mid-reply before the interruption')
 
-  const flushesBefore = flushes
-  const audioBefore = audioBytes
-
-  // Straight in, with no synthesis delay.
-  await speakAsCandidate(interruption, 8)
-  await sleep(1500)
-
-  const audioAfterInterrupt = audioBytes - audioBefore
-  check(flushes > flushesBefore, 'server tells the browser to flush buffered audio', `${flushes - flushesBefore} flush(es)`)
+  check(caughtSpeaking, 'interviewer is mid-reply before the interruption', `${attempts} attempt(s)`)
+  check(interrupted, 'server tells the browser to flush buffered audio', detail)
   check(
     states[states.length - 1] !== 'speaking',
     'leaves the speaking state',
-    `state now "${states[states.length - 1]}", ${audioAfterInterrupt} bytes arrived after cut-in`,
+    `state now "${states[states.length - 1]}"`,
   )
 
   send({ type: 'end' })

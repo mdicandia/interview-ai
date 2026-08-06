@@ -13,12 +13,13 @@ import {
 } from '@/lib/problems/types'
 import { RuntimeClient, type RuntimeStatus } from '@/lib/runtime/client'
 import type { RunSummary, TestResult } from '@/lib/runtime/protocol'
-import type { TranscriptLine, VoiceClient } from '@/lib/client/voice'
+import type { Observation, TranscriptLine, VoiceClient } from '@/lib/client/voice'
 import { useSession } from '@/lib/session/store'
 import {
   enterRound,
   recordFiles,
   recordHint,
+  recordObservations,
   recordRun,
   recordTranscript,
   type RoundMeta,
@@ -201,6 +202,11 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
         meta,
         lines.map(({ role, text, at }) => ({ role, text, at })),
       ),
+    [meta],
+  )
+
+  const onObservations = useCallback(
+    (observations: Observation[]) => recordObservations(meta, observations),
     [meta],
   )
 
@@ -502,6 +508,7 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
                   onRunTests={run}
                   clientRef={(client) => { voiceRef.current = client }}
                   onTranscript={onTranscript}
+                  onObservations={onObservations}
                 />
               </div>
               <div className={`min-h-0 flex-1 ${assistTab === 'hints' ? '' : 'hidden'}`}>

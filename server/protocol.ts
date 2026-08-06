@@ -88,6 +88,21 @@ export type ServerMessage =
   | { type: 'flush-audio' }
   /** The interviewer asked to run the tests. The browser owns execution. */
   | { type: 'run-tests' }
+  /**
+   * A moment the interviewer flagged for the report, via `note_observation`.
+   *
+   * Never shown to the candidate mid-round — seeing "concern: could not justify
+   * that choice" appear live would change how they behave for the rest of the
+   * session, which is the opposite of what a practice run is for. It goes
+   * straight into the evidence record and surfaces only in the report.
+   */
+  | {
+      type: 'observation'
+      note: string
+      axis: 'content' | 'delivery'
+      significance: 'strength' | 'concern'
+      at: number
+    }
   /*
    * There is deliberately no 'report' message.
    *

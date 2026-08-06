@@ -1,5 +1,6 @@
 import type { Language, Problem } from '@/lib/problems/types'
-import type { LLMProvider, Message } from '../pipeline/llm'
+import type { LLMProvider, Message, ToolCall } from '../pipeline/llm'
+import { INTERVIEWER_TOOLS, parseObservation, type Observation } from './tools'
 import { SentenceSplitter } from '../pipeline/sentences'
 import { createSttClient, type SttClient } from '../pipeline/stt'
 import { createTtsClient, type TtsClient } from '../pipeline/tts'
@@ -39,6 +40,27 @@ export interface SessionConfig {
   sendAudio: (pcm: Buffer) => void
 }
 
+/**
+ * Removes bracketed meta-text before anything is spoken.
+ *
+ * The interviewer receives bracketed status notes — [tests: 3 of 5 passing] —
+ * and is told they are context rather than speech. It also has a tool for
+ * recording private notes. Observed live: it conflated the two and emitted
+ * `[Note: the tests pass but the code shown is the *unfixed* original — ...]`
+ * as ordinary content, which goes straight to the speech synthesiser and out of
+ * the speakers.
+ *
+ * The prompt forbids this and is not enough on its own. Stripping here costs
+ * nothing real: an interviewer talking about an array says "square bracket" as
+ * words, never as a literal `[`.
+ */
+function stripMetaNotes(text: string): string {
+  return text
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 /** Silence *and* no typing for this long before the interviewer speaks up. */
 const IDLE_NUDGE_MS = 45_000
 
@@ -74,6 +96,9 @@ export class InterviewSession {
 
   /** Hints taken from the text panel, for the report. */
   readonly hintsTaken: { level: number; text: string; at: number }[] = []
+
+  /** Moments the interviewer flagged live, via `note_observation`. */
+  readonly observations: Observation[] = []
 
   constructor(config: SessionConfig) {
     this.#config = config
@@ -211,8 +236,16 @@ export class InterviewSession {
   /**
    * Produce and speak one interviewer turn.
    *
-   * The volatile note goes *after* the history rather than into the system
-   * prompt, so the cached prefix stays byte-identical. See prompt.ts.
+   * Up to two passes, because a tool call can arrive with no speech attached —
+   * measured: `finish_reason: 'tool_calls'` and an empty content stream. That
+   * turn is silent, so without a follow-up the state machine would sit in
+   * `thinking` forever. One follow-up is enough; a model that calls a tool
+   * silently twice in a row gets no third chance, which bounds both the latency
+   * and the bill for a turn.
+   *
+   * Once anything has been said the loop stops even if a tool was called. Test
+   * results arrive on their own as a `test-results` message and trigger a fresh
+   * turn, so waiting here would only add silence.
    */
   async #respond(candidateText: string): Promise<void> {
     this.#clearIdleTimer()
@@ -222,39 +255,35 @@ export class InterviewSession {
 
     const abort = new AbortController()
     this.#abort = abort
+
+    /*
+     * A fresh TTS context for every turn, not just after a barge-in.
+     *
+     * `finish()` sends `continue: false`, which closes the context at Cartesia
+     * for good. Reusing the id on the next turn is rejected with "Context has
+     * closed and is no longer accepting new inputs" — and the failure is quiet
+     * in the worst way: the transcript still streams, so the interviewer appears
+     * to be talking while no audio comes out.
+     */
+    this.#contextId += 1
     const contextId = this.#currentContext()
 
-    const turn: Message[] = [
-      ...this.#history,
-      { role: 'user', content: buildVolatileNote(this.#volatile) },
-    ]
-
-    let spoken = ''
+    let said = ''
     try {
-      const { text } = await this.#config.llm.stream({
-        frozenPrefix: this.#frozenPrefix,
-        history: turn,
-        signal: abort.signal,
-      })
-
-      const splitter = new SentenceSplitter()
-      for await (const delta of text) {
-        if (abort.signal.aborted) break
-        for (const sentence of splitter.push(delta)) {
-          spoken += `${sentence} `
-          this.#tts?.speak(sentence, contextId)
-          this.#config.send({ type: 'transcript', role: 'interviewer', text: sentence, final: true })
-        }
+      for (let pass = 0; pass < 2; pass += 1) {
+        const { spoken, calls } = await this.#generate(abort, contextId)
+        said += spoken
+        this.#history.push({
+          role: 'assistant',
+          content: spoken.trim(),
+          ...(calls.length > 0 ? { toolCalls: calls } : {}),
+        })
+        if (abort.signal.aborted) return
+        if (calls.length === 0) break
+        this.#dispatch(calls)
+        if (spoken.trim() !== '') break
       }
-      if (!abort.signal.aborted) {
-        const tail = splitter.flush()
-        if (tail) {
-          spoken += tail
-          this.#tts?.speak(tail, contextId)
-          this.#config.send({ type: 'transcript', role: 'interviewer', text: tail, final: true })
-        }
-        this.#tts?.finish(contextId)
-      }
+      if (!abort.signal.aborted) this.#tts?.finish(contextId)
     } catch (error) {
       // An abort is the expected outcome of barge-in, not a failure.
       if (!abort.signal.aborted) {
@@ -271,17 +300,111 @@ export class InterviewSession {
       if (this.#abort === abort) this.#abort = null
     }
 
-    const said = spoken.trim()
-    if (said !== '') {
-      this.#history.push({ role: 'assistant', content: said })
-      this.transcript.push({ role: 'interviewer', text: said, at: Date.now() })
-    }
-
-    // If nothing was spoken (empty response, or aborted before any sentence),
-    // the 'done' callback will never fire, so settle the state here.
-    if (said === '' && !abort.signal.aborted) {
+    if (said.trim() !== '') {
+      this.transcript.push({ role: 'interviewer', text: said.trim(), at: Date.now() })
+    } else if (!abort.signal.aborted) {
+      // Nothing was spoken, so the TTS 'done' callback will never fire and
+      // nothing else would move the state off `thinking`.
       this.#setState('idle')
       this.#armIdleTimer()
+    }
+  }
+
+  /**
+   * One generation pass: speak whatever comes back, collect whatever tools were
+   * asked for.
+   *
+   * The volatile note goes *after* the history rather than into the system
+   * prompt, so the cached prefix stays byte-identical. See prompt.ts.
+   */
+  async #generate(
+    abort: AbortController,
+    contextId: string,
+  ): Promise<{ spoken: string; calls: ToolCall[] }> {
+    const turn: Message[] = [
+      ...this.#history,
+      { role: 'user', content: buildVolatileNote(this.#volatile) },
+    ]
+
+    const { text, toolCalls } = await this.#config.llm.stream({
+      frozenPrefix: this.#frozenPrefix,
+      history: turn,
+      signal: abort.signal,
+      tools: INTERVIEWER_TOOLS,
+      // A tool call is spent out of the same budget as the speech, and a
+      // `note_observation` with a two-sentence note is most of a 120-token
+      // ceiling on its own. That does not truncate visibly — the model simply
+      // stops choosing to take notes, which looks like the tool being ignored.
+      // Length is governed by the prompt, not by this number.
+      maxTokens: 220,
+    })
+
+    const say = (sentence: string) => {
+      const spoken = stripMetaNotes(sentence)
+      if (spoken === '') return
+      this.#tts?.speak(spoken, contextId)
+      this.#config.send({ type: 'transcript', role: 'interviewer', text: spoken, final: true })
+    }
+
+    let spoken = ''
+    const splitter = new SentenceSplitter()
+    for await (const delta of text) {
+      if (abort.signal.aborted) break
+      for (const sentence of splitter.push(delta)) {
+        spoken += `${sentence} `
+        say(sentence)
+      }
+    }
+    if (!abort.signal.aborted) {
+      const tail = splitter.flush()
+      if (tail) {
+        spoken += tail
+        say(tail)
+      }
+    }
+
+    return { spoken, calls: await toolCalls }
+  }
+
+  /**
+   * Runs the tools the model asked for and appends their results to the history.
+   *
+   * Every call gets a result message even when it failed, because the API
+   * rejects a conversation where an assistant tool call has no answer — and the
+   * next turn would then fail rather than the current one, which is a miserable
+   * thing to debug.
+   */
+  #dispatch(calls: ToolCall[]): void {
+    for (const call of calls) {
+      let result: string
+
+      switch (call.name) {
+        case 'run_tests':
+          // The browser owns every runtime; the server has none. Results come
+          // back later as a `test-results` message, which starts its own turn.
+          this.#config.send({ type: 'run-tests' })
+          result =
+            'The tests are running in their editor now. Do not wait for the result — it ' +
+            'will reach you as a status note when it lands.'
+          break
+
+        case 'note_observation': {
+          const observation = parseObservation(call.arguments)
+          if (observation) {
+            this.observations.push(observation)
+            this.#config.send({ type: 'observation', ...observation })
+            result = 'Noted for the report. Say nothing about it.'
+          } else {
+            result = 'That note could not be read. Carry on; do not retry it.'
+          }
+          break
+        }
+
+        default:
+          result = `There is no tool called ${call.name}. Carry on without it.`
+      }
+
+      this.#history.push({ role: 'tool', content: result, toolCallId: call.id })
     }
   }
 

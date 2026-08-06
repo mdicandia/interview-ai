@@ -181,6 +181,23 @@ export class InterviewSession {
     })
   }
 
+  /**
+   * What this session has spent on the metered APIs.
+   *
+   * Reported because the two services bill on completely different axes, and one
+   * of them is counter-intuitive. Cartesia bills what the interviewer *says*, so
+   * a quiet round is cheap. Deepgram bills the microphone being *open*, so forty
+   * minutes of silent typing costs exactly as much as forty minutes of talking.
+   * Without seeing both, the obvious guess about which one to economise on is
+   * the wrong one.
+   */
+  usage(): { spokenCharacters: number; listenedSeconds: number } {
+    return {
+      spokenCharacters: this.#tts?.charactersSpoken() ?? 0,
+      listenedSeconds: this.#stt?.audioSeconds() ?? 0,
+    }
+  }
+
   async end(): Promise<void> {
     this.#clearIdleTimer()
     this.#abort?.abort()

@@ -146,13 +146,32 @@ server.on('connection', (socket: WebSocket) => {
         break
 
       case 'end':
+        reportUsage()
         await session?.end()
         session = null
         break
     }
   }
 
+  /**
+   * Prints what the session cost on the way out.
+   *
+   * Both figures are metered by a third party and neither is visible anywhere
+   * else. Deepgram's is the surprising one — it counts the microphone being
+   * open, not you talking — so it is the number worth watching.
+   */
+  function reportUsage() {
+    if (!session) return
+    const { spokenCharacters, listenedSeconds } = session.usage()
+    const minutes = listenedSeconds / 60
+    console.log(
+      `[voice] session used ~${spokenCharacters} TTS characters and ` +
+        `${minutes.toFixed(1)} min of streamed audio (≈ $${(minutes * 0.0048).toFixed(3)} Deepgram)`,
+    )
+  }
+
   socket.on('close', () => {
+    reportUsage()
     void session?.end()
     session = null
   })

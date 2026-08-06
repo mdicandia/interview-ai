@@ -54,6 +54,15 @@ export interface SttEvents {
 export interface SttClient {
   /** Feed raw PCM16 at SAMPLE_RATE from the browser. */
   send(pcm: Buffer): void
+  /**
+   * Seconds of audio forwarded so far.
+   *
+   * Deepgram bills streamed audio by the minute, so this is the session's actual
+   * cost driver — and it is wall-clock, not speech: an open microphone bills for
+   * the forty minutes you spend typing in silence just as much as the five you
+   * spend talking.
+   */
+  audioSeconds(): number
   /** Flush and close cleanly, so trailing audio still gets transcribed. */
   close(): void
 }
@@ -160,13 +169,46 @@ export async function createSttClient(apiKey: string, events: SttEvents): Promis
     }
   })
 
-  socket.on('close', () => events.onClose())
+  socket.on('close', () => {
+    clearInterval(keepAlive)
+    events.onClose()
+  })
+
+  /** Bytes of audio forwarded, so a session can report what it cost. */
+  let audioBytes = 0
+  let lastAudioAt = Date.now()
+
+  /*
+   * Deepgram closes a stream that goes 10 seconds without audio.
+   *
+   * That is not hypothetical here: muting stops the capture worklet emitting
+   * frames at all, so pressing Mute to think for a moment used to end the
+   * session silently — the socket closed, and the interviewer simply never
+   * heard anything again. Muting is also the only way to avoid paying for
+   * wall-clock minutes you are not speaking in, so the feature that saves money
+   * was the feature that broke the session.
+   *
+   * A `KeepAlive` every four seconds holds the connection open without sending
+   * audio, which is exactly the state we want: connected, and not billing for
+   * silence.
+   */
+  const keepAlive = setInterval(() => {
+    if (socket.readyState !== WebSocket.OPEN) return
+    if (Date.now() - lastAudioAt < 3_000) return
+    socket.send(JSON.stringify({ type: 'KeepAlive' }))
+  }, 4_000)
 
   return {
     send(pcm) {
-      if (socket.readyState === WebSocket.OPEN) socket.send(pcm)
+      if (socket.readyState !== WebSocket.OPEN) return
+      socket.send(pcm)
+      audioBytes += pcm.length
+      lastAudioAt = Date.now()
     },
+    /** Seconds of audio actually sent — what Deepgram bills for. */
+    audioSeconds: () => audioBytes / (SAMPLE_RATE * 2),
     close() {
+      clearInterval(keepAlive)
       if (socket.readyState === WebSocket.OPEN) {
         // Deepgram transcribes any buffered audio before closing when told this
         // way; a bare socket.close() can drop the last word of a sentence.

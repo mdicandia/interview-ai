@@ -10,8 +10,11 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import WebSocket from 'ws'
-import { createTtsClient, SAMPLE_RATE } from '../server/pipeline/tts'
+import { createTtsClient, DEFAULT_VOICE_ID, SAMPLE_RATE } from '../server/pipeline/tts'
 import type { ClientMessage, ServerMessage, TurnState } from '../server/protocol'
 
 const GREEN = '\x1b[32m'
@@ -32,8 +35,29 @@ function check(ok: boolean, label: string, detail = '') {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-/** Synthesises a sentence to raw PCM, to stand in for the microphone. */
+/*
+ * The candidate's voice is cached on disk, and that is not an optimisation.
+ *
+ * This script says the same five sentences every run, and re-synthesising them
+ * costs real money each time. A run of this file drained a month's free Cartesia
+ * tier during one afternoon of chasing a flaky assertion — the failure was in
+ * this harness, so the same fixed sentences were paid for over and over while
+ * nothing about them changed.
+ *
+ * The cache is keyed by the text itself, so editing a line re-synthesises only
+ * that line. It is gitignored: audio does not belong in the repo, and a fresh
+ * clone paying once is the right trade.
+ */
+const SPEECH_CACHE = join(process.cwd(), '.cache', 'speech')
+
+/** Characters actually sent to Cartesia by this run. */
+let charactersSynthesised = 0
+
 async function speechFor(text: string): Promise<Buffer> {
+  const key = createHash('sha256').update(`${DEFAULT_VOICE_ID}:${text}`).digest('hex').slice(0, 16)
+  const cached = join(SPEECH_CACHE, `${key}.pcm`)
+  if (existsSync(cached)) return readFileSync(cached)
+
   const chunks: Buffer[] = []
   let done = false
   const tts = await createTtsClient(process.env.CARTESIA_API_KEY ?? '', {
@@ -46,10 +70,18 @@ async function speechFor(text: string): Promise<Buffer> {
   const deadline = Date.now() + 25_000
   while (!done && Date.now() < deadline) await sleep(40)
   tts.close()
-  return Buffer.concat(chunks)
+
+  const pcm = Buffer.concat(chunks)
+  if (pcm.length > 0) {
+    charactersSynthesised += text.length
+    mkdirSync(SPEECH_CACHE, { recursive: true })
+    writeFileSync(cached, pcm)
+  }
+  return pcm
 }
 
 async function main() {
+  const runStartedAt = Date.now()
   console.log('\nStarting voice server')
 
   const child: ChildProcess = spawn(
@@ -494,6 +526,25 @@ async function main() {
   socket.close()
   child.kill()
   await sleep(300)
+
+  /*
+   * What this run cost, printed every time.
+   *
+   * This script spends real money on three metered APIs, and that was invisible
+   * until a month's Cartesia allowance disappeared into repeated runs of it. A
+   * number on screen is the difference between "the test is flaky, run it again"
+   * and "the test is flaky, and each retry costs something".
+   *
+   * The interviewer's own speech is not counted here — the server synthesises it
+   * and this process never sees the text — so treat the total as a floor.
+   */
+  const audioMinutes = (Date.now() - runStartedAt) / 60_000
+  console.log(
+    `\n${DIM}This run: ~${charactersSynthesised} Cartesia credits for candidate speech` +
+      ` (cached clips are free on the next run), ~${audioMinutes.toFixed(1)} min of Deepgram` +
+      ` streaming ≈ $${(audioMinutes * 0.0048).toFixed(3)}, plus the interviewer's own` +
+      ` replies.${RESET}`,
+  )
 
   console.log(
     failures === 0

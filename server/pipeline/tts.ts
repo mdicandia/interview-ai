@@ -57,6 +57,13 @@ export interface TtsClient {
    * second from the buffer after being interrupted.
    */
   cancel(contextId: string): void
+  /**
+   * Characters submitted for synthesis so far.
+   *
+   * Cartesia bills roughly one credit per character, so this is the session's
+   * actual spend rather than an estimate from audio duration.
+   */
+  charactersSpoken(): number
   close(): void
 }
 
@@ -151,9 +158,14 @@ export async function createTtsClient(
     if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(payload))
   }
 
+  let characters = 0
+
   return {
+    charactersSpoken: () => characters,
+
     speak(text, contextId) {
       if (cancelled.has(contextId) || text.trim() === '') return
+      characters += text.length
       send({
         model_id: MODEL_ID,
         transcript: text,

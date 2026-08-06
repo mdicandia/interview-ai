@@ -47,3 +47,7 @@ next-env.d.ts
 /public/pyodide/
 /public/esbuild/
 /public/vendor/
+
+# Synthesised speech fixtures for verify:server. Regenerated on demand;
+# committing audio is not worth the repo size.
+.cache/

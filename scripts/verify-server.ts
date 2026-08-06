@@ -101,11 +101,20 @@ async function main() {
   let ready = false
   let firstAudioAt: number | null = null
   let turnStartedAt = 0
+  /** Set when the candidate's voiced audio ends; the gap is measured from it. */
+  let stoppedTalkingAt = 0
+  /** How long the candidate waited in silence, per turn. */
+  const gaps: number[] = []
 
   socket.on('message', (data, isBinary) => {
     if (isBinary) {
       audioBytes += (data as Buffer).length
       if (firstAudioAt === null && turnStartedAt > 0) firstAudioAt = Date.now() - turnStartedAt
+      // First sound of a turn: either a backchannel clip or the reply itself.
+      if (stoppedTalkingAt > 0) {
+        gaps.push(Date.now() - stoppedTalkingAt)
+        stoppedTalkingAt = 0
+      }
       return
     }
     const message = JSON.parse(data.toString()) as ServerMessage
@@ -161,6 +170,10 @@ async function main() {
       socket.send(audio.subarray(offset, Math.min(offset + FRAME, audio.length)), { binary: true })
       await sleep(20)
     }
+    // The moment the candidate actually stops talking. Everything the listener
+    // experiences as "the gap" is measured from here, not from the start of the
+    // sentence — the trailing silence below is the endpointing window.
+    stoppedTalkingAt = Date.now()
     const silence = Buffer.alloc(FRAME)
     for (let i = 0; i < silenceFrames; i++) {
       socket.send(silence, { binary: true })
@@ -312,6 +325,31 @@ async function main() {
     `"${interviewerSaid.slice(beforeNote).join(' ').slice(0, 70)}"`,
   )
 
+  console.log('\nThe gap')
+
+  /*
+   * How long the candidate sits in silence after they stop talking.
+   *
+   * This is the number the backchannel clips exist to move. Without them the
+   * floor is endpointing (~300ms) plus DeepSeek's first token (~1100ms) plus
+   * Cartesia (~40ms) — call it 1.5s, which reads as a dropped call rather than
+   * a pause for thought. A clip fires as soon as endpointing does, so the first
+   * sound arrives while the reply is still being written.
+   *
+   * Some turns get no clip on purpose, so the slowest gap here should still look
+   * like the un-masked number. It is the median that should have moved.
+   */
+  const sorted = [...gaps].sort((a, b) => a - b)
+  const median = sorted[Math.floor(sorted.length / 2)] ?? 0
+  console.log(
+    `  ${DIM}·${RESET} gaps: ${gaps.map((g) => `${g}ms`).join(', ')} ${DIM}(median ${median}ms over ${gaps.length} turns)${RESET}`,
+  )
+  check(
+    sorted.length > 0 && sorted[0] < 1200,
+    'at least one turn answers faster than the un-masked floor',
+    `fastest ${sorted[0]}ms`,
+  )
+
   console.log('\nBarge-in')
 
   // Both clips are synthesised up front. Generating the interruption *after*
@@ -368,11 +406,58 @@ async function main() {
      */
     await speakAsCandidate(longPrompt, 50)
 
-    const speakDeadline = Date.now() + 15_000
-    while (Date.now() < speakDeadline && states[states.length - 1] !== 'speaking') {
-      await sleep(30)
+    /*
+     * Cuts in as soon as the turn starts, rather than waiting for speech.
+     *
+     * Waiting for `speaking` looks stricter and is in fact unreliable: the
+     * interviewer is deliberately terse, so a reply can be two seconds of audio,
+     * which is less time than it takes to stream an interruption in and have
+     * Deepgram commit to it. Three attempts in a row missed for that reason —
+     * the reply had ended on its own, so there was nothing left to interrupt and
+     * the failure said nothing about barge-in.
+     *
+     * `thinking` is a genuine barge-in window and a deterministic one. It is
+     * also the more realistic case now that a backchannel clip is playing during
+     * it: cutting in over the interviewer's "mm-hm" is exactly the thing that
+     * has to abort the pending reply and flush what is already queued.
+     */
+    const startDeadline = Date.now() + 15_000
+    const midTurn = () => states[states.length - 1] === 'thinking' || states[states.length - 1] === 'speaking'
+    /*
+     * Keeps streaming silence while waiting, exactly as an open microphone does.
+     *
+     * Simply sleeping here leaves a hole in the audio timeline, and Deepgram
+     * raises `SpeechStarted` on a transition out of silence — with no silence
+     * sent, the interruption that follows is not a transition and the event
+     * never fires. That is what made this test fail intermittently for reasons
+     * that had nothing to do with the server: barge-in was never triggered at
+     * all, so of course no flush followed.
+     */
+    const quiet = Buffer.alloc(FRAME)
+    while (Date.now() < startDeadline && !midTurn()) {
+      socket.send(quiet, { binary: true })
+      await sleep(20)
     }
-    if (states[states.length - 1] !== 'speaking') continue
+    if (!midTurn()) continue
+
+    /*
+     * A beat of silence before cutting in, and it is load-bearing.
+     *
+     * The server advances to `thinking` on Deepgram's `speech_final`, which
+     * arrives well before `utterance_end_ms` (1s) has elapsed. Deepgram's voice
+     * activity detector still considers that speech segment open, so an
+     * interruption sent immediately is folded into it — same segment, no
+     * transition, no `SpeechStarted`, no barge-in. Waiting lets the segment
+     * close so the cut-in registers as new speech.
+     *
+     * This also models what a person actually does: you interrupt once you hear
+     * the interviewer start, not in the same breath as your own last word.
+     */
+    for (let i = 0; i < 30; i += 1) {
+      socket.send(quiet, { binary: true })
+      await sleep(20)
+    }
+    if (!midTurn()) continue
 
     const flushesBefore = flushes
     const audioBefore = audioBytes
@@ -384,10 +469,8 @@ async function main() {
       `    ${DIM}attempt ${attempts}: states ${states.slice(statesBefore).join(' → ') || '(none)'}${RESET}`,
     )
 
-    // Only a meaningful attempt if the reply had not already ended on its own.
-    if (states[states.length - 1] === 'speaking' || flushes > flushesBefore) {
-      caughtSpeaking = true
-    }
+    // Only a meaningful attempt if the turn had not already finished on its own.
+    if (midTurn() || flushes > flushesBefore) caughtSpeaking = true
     await sleep(1500)
 
     if (flushes > flushesBefore) {
@@ -398,7 +481,7 @@ async function main() {
     }
   }
 
-  check(caughtSpeaking, 'interviewer is mid-reply before the interruption', `${attempts} attempt(s)`)
+  check(caughtSpeaking, 'interviewer is mid-turn when the interruption lands', `${attempts} attempt(s)`)
   check(interrupted, 'server tells the browser to flush buffered audio', detail)
   check(
     states[states.length - 1] !== 'speaking',
@@ -420,4 +503,22 @@ async function main() {
   process.exit(failures === 0 ? 0 : 1)
 }
 
-void main()
+/*
+ * A clean exit rather than a stack trace.
+ *
+ * This script needs Deepgram and Cartesia credit as well as DeepSeek, and the
+ * failure that gets you is an expired balance — which surfaces as a WebSocket
+ * handshake rejection deep inside `speechFor` and reads like a bug in the code
+ * under test. It is not. Say which service and what to do about it.
+ */
+main().catch((error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error)
+  console.error(`\n${RED}Could not complete the run.${RESET}\n  ${message}\n`)
+  if (/out of credit|rejected the key/i.test(message)) {
+    console.error(
+      `  ${DIM}This script drives the real pipeline end to end, so it needs a working` +
+        ` account for all three services.${RESET}\n`,
+    )
+  }
+  process.exit(1)
+})

@@ -83,9 +83,44 @@ export async function createTtsClient(
   /** Contexts already opened, so we know whether to continue or start fresh. */
   const started = new Set<string>()
 
+  /*
+   * Attached before the handshake is awaited, not after.
+   *
+   * `ws` emits `error` and then, on a failed handshake, emits it again as the
+   * socket tears down. With the only listener being the `once` inside the
+   * promise below, that second event has no handler — and an unhandled 'error'
+   * on an EventEmitter is a hard process crash, so a Cartesia outage took the
+   * whole voice server down instead of failing one session.
+   */
+  let connected = false
+  socket.on('error', (error) => {
+    if (connected) events.onError(error as Error)
+  })
+
   await new Promise<void>((resolve, reject) => {
-    socket.once('open', resolve)
-    socket.once('error', reject)
+    socket.once('open', () => {
+      connected = true
+      resolve()
+    })
+    socket.once('error', (error: Error) => {
+      socket.terminate()
+      // A handshake rejection arrives as a bare "Unexpected server response:
+      // 402", which is a miserable thing to see in the interview room. The
+      // status is the whole diagnosis, so name it.
+      const status = /Unexpected server response: (\d+)/.exec(error.message)?.[1]
+      if (status === '402') {
+        reject(
+          new Error(
+            'Cartesia rejected the connection: the account is out of credit. ' +
+              'The key is valid — top it up at https://play.cartesia.ai',
+          ),
+        )
+      } else if (status === '401' || status === '403') {
+        reject(new Error(`Cartesia rejected the key (${status}). Check CARTESIA_API_KEY in .env.local`))
+      } else {
+        reject(error)
+      }
+    })
   })
 
   socket.on('message', (raw) => {
@@ -111,8 +146,6 @@ export async function createTtsClient(
       events.onDone(contextId)
     }
   })
-
-  socket.on('error', (error) => events.onError(error as Error))
 
   const send = (payload: unknown) => {
     if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(payload))

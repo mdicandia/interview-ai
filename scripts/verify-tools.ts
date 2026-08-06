@@ -19,7 +19,11 @@
  * Run with: pnpm verify:tools
  */
 
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { getProblem } from '../problems'
+import { loadBackchannels } from '../server/interview/backchannel'
 import { InterviewSession } from '../server/interview/orchestrator'
 import type { LLMProvider, StreamResult, ToolCall } from '../server/pipeline/llm'
 import type { ServerMessage } from '../server/protocol'
@@ -209,6 +213,57 @@ async function main() {
       'settles back to idle anyway',
       `ended on "${states[states.length - 1]?.turn}"`,
     )
+  }
+
+  console.log('\nBackchannel clips')
+  {
+    // Real committed clips, read off disk.
+    const live = loadBackchannels(undefined, () => 0)
+    check(live.size >= 4, 'loads the committed clips', `${live.size} clips`)
+    const clip = live.next()
+    check(clip !== null && clip.length > 0, 'returns playable PCM', `${clip?.length ?? 0} bytes`)
+    // 16kHz mono PCM16 — two bytes per sample, and an odd length would mean the
+    // WAV header was sliced at the wrong offset.
+    check((clip?.length ?? 1) % 2 === 0, 'sample-aligned, so the header was parsed')
+
+    // A `LIST` chunk before `data` is legal, and slicing at a fixed 44 bytes
+    // would feed those bytes to the speaker as noise.
+    const dir = mkdtempSync(join(tmpdir(), 'backchannel-'))
+    const pcm = Buffer.alloc(320, 7)
+    const list = Buffer.from('LIST   INFO', 'binary')
+    const header = Buffer.alloc(44)
+    header.write('RIFF', 0)
+    header.writeUInt32LE(36 + list.length + pcm.length, 4)
+    header.write('WAVE', 8)
+    header.write('fmt ', 12)
+    header.writeUInt32LE(16, 16)
+    header.writeUInt16LE(1, 20)
+    header.writeUInt16LE(1, 22)
+    header.writeUInt32LE(16_000, 24)
+    header.writeUInt32LE(32_000, 28)
+    header.writeUInt16LE(2, 32)
+    header.writeUInt16LE(16, 34)
+    header.write('data', 36)
+    header.writeUInt32LE(pcm.length, 40)
+    writeFileSync(
+      join(dir, 'padded.wav'),
+      Buffer.concat([header.subarray(0, 36), list, header.subarray(36), pcm]),
+    )
+    const padded = loadBackchannels(dir, () => 0).next()
+    check(padded?.length === pcm.length, 'skips non-audio chunks', `${padded?.length} of ${pcm.length} bytes`)
+    check(padded?.[0] === 7, 'and starts at the real audio')
+
+    // Hearing the same token twice running is more obviously synthetic than
+    // saying nothing would have been.
+    const sequence = loadBackchannels(undefined, () => 0.5)
+    const first = sequence.next()
+    const second = sequence.next()
+    check(first !== null && second !== null && !first.equals(second), 'never repeats back to back')
+
+    // A pause before a hard follow-up is in character, not a defect.
+    check(loadBackchannels(undefined, () => 0.99).next() === null, 'stays silent on some turns')
+
+    check(loadBackchannels(join(dir, 'nope')).next() === null, 'degrades quietly with no clips')
   }
 
   console.log(

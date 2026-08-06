@@ -10,9 +10,9 @@ A local, single-user tool for practising **live coding interviews**: a voice
 interviewer talking to you while you write code in a shared editor. Build plan and
 phase breakdown: `~/.claude/plans/can-we-develop-something-wobbly-lamport.md`.
 
-Status: **editor, execution, voice interviewer with tool use, hints and the
-post-session report all work.** Still missing: backchannel clips, an interviewer
-on discussion rounds, and socket reconnection.
+Status: **editor, execution, voice interviewer with tool use, hints, backchannel
+clips and the post-session report all work.** Still missing: an interviewer on
+discussion rounds, and socket reconnection.
 
 ## Three execution paths
 
@@ -81,6 +81,7 @@ pnpm verify:server     # a real spoken session: turn machine, tool use, barge-in
 pnpm typecheck
 pnpm lint
 pnpm copy-assets       # re-copy Pyodide/esbuild WASM into public/ (also runs postinstall)
+pnpm gen:backchannels  # re-synthesise the "mm-hm" clips (they are committed; rarely needed)
 ```
 
 ## Layout
@@ -98,5 +99,8 @@ pnpm copy-assets       # re-copy Pyodide/esbuild WASM into public/ (also runs po
 - `lib/session/` — session templates and the timer (`store.ts`), plus the evidence
   record the report is built from (`record.ts`). See constraint 4.
 - `server/pipeline/` — STT, TTS, the sentence splitter, and the `LLMProvider`.
+- `server/backchannel/` — committed "mm-hm" clips that cover the model's ~1.1s
+  time-to-first-token. Measured: median gap after the candidate stops talking
+  drops from ~1.5s to ~490ms. Regenerate with `pnpm gen:backchannels`.
 - `server/interview/` — the frozen-prefix prompt builder, the turn state machine,
   the hint ladder, and `report.ts`.

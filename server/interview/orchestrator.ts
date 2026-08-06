@@ -1,6 +1,7 @@
 import type { Language, Problem } from '@/lib/problems/types'
 import type { LLMProvider, Message, ToolCall } from '../pipeline/llm'
 import { INTERVIEWER_TOOLS, parseObservation, type Observation } from './tools'
+import { loadBackchannels, type Backchannel } from './backchannel'
 import { SentenceSplitter } from '../pipeline/sentences'
 import { createSttClient, type SttClient } from '../pipeline/stt'
 import { createTtsClient, type TtsClient } from '../pipeline/tts'
@@ -86,6 +87,8 @@ export class InterviewSession {
   /** Aborts the in-flight LLM stream on barge-in. */
   #abort: AbortController | null = null
   #contextId = 0
+
+  #backchannel: Backchannel = loadBackchannels()
 
   #idleTimer: ReturnType<typeof setTimeout> | null = null
   #lastNudgeAt = 0
@@ -228,6 +231,26 @@ export class InterviewSession {
       return
     }
     this.transcript.push({ role: 'candidate', text: said, at: Date.now() })
+
+    /*
+     * Only here, and deliberately not inside `#respond`.
+     *
+     * `#respond` also runs for the idle nudge and for test results coming back,
+     * and an acknowledgement makes no sense on either: nobody said anything for
+     * it to acknowledge. "Mm-hm" in reply to your own silence is unsettling.
+     *
+     * No guard against the microphone hearing this and triggering a barge-in on
+     * it, which would abort the reply before it started. The browser's echo
+     * cancellation is on and is built for exactly this, and the pipeline already
+     * plays whole replies through the same speakers with a live mic without
+     * barging in on itself. A clip under a second is strictly less exposure than
+     * that. Worth knowing that neither case has been tested with real speakers:
+     * every run so far has piped synthesised audio straight into the socket, so
+     * there has never been an acoustic path at all.
+     */
+    const clip = this.#backchannel.next()
+    if (clip) this.#config.sendAudio(clip)
+
     await this.#respond(said)
   }
 

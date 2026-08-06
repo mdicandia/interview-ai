@@ -16,7 +16,8 @@
     "dev:voice": "node --env-file=.env.local --import tsx --watch server/index.ts",
     "verify:server": "node --env-file=.env.local --import tsx scripts/verify-server.ts",
     "verify:report": "node --env-file=.env.local --import tsx scripts/verify-report.ts",
-    "verify:tools": "tsx scripts/verify-tools.ts"
+    "verify:tools": "tsx scripts/verify-tools.ts",
+    "gen:backchannels": "node --env-file=.env.local --import tsx scripts/gen-backchannels.ts"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.4",

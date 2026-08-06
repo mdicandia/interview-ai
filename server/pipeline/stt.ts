@@ -89,9 +89,35 @@ export async function createSttClient(apiKey: string, events: SttEvents): Promis
     headers: { Authorization: `Token ${apiKey}` },
   })
 
+  // Attached before the handshake is awaited. A failed handshake emits `error`
+  // twice — once for the rejection, once as the socket tears down — and the
+  // second has no listener if the only one is the `once` below. An unhandled
+  // 'error' event is a hard process crash, so one bad connection would take the
+  // whole voice server with it rather than failing a single session.
+  let connected = false
+  socket.on('error', (error) => {
+    if (connected) events.onError(error as Error)
+  })
+
   await new Promise<void>((resolve, reject) => {
-    socket.once('open', resolve)
-    socket.once('error', reject)
+    socket.once('open', () => {
+      connected = true
+      resolve()
+    })
+    socket.once('error', (error: Error) => {
+      socket.terminate()
+      const status = /Unexpected server response: (\d+)/.exec(error.message)?.[1]
+      reject(
+        status === '401' || status === '403'
+          ? new Error(`Deepgram rejected the key (${status}). Check DEEPGRAM_API_KEY in .env.local`)
+          : status === '402'
+            ? new Error(
+                'Deepgram rejected the connection: the account is out of credit. ' +
+                  'The key is valid — top it up at https://console.deepgram.com',
+              )
+            : error,
+      )
+    })
   })
 
   socket.on('message', (raw) => {
@@ -134,7 +160,6 @@ export async function createSttClient(apiKey: string, events: SttEvents): Promis
     }
   })
 
-  socket.on('error', (error) => events.onError(error as Error))
   socket.on('close', () => events.onClose())
 
   return {

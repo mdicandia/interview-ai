@@ -103,7 +103,7 @@ export function Autocomplete({ search, onSelect, debounceMs = 150 }: Autocomplet
       {
         path: 'Autocomplete.test.tsx',
         readOnly: true,
-        content: `import { deepEqual, equal, focus, ok, press, render, settle, typeInto } from 'harness'
+        content: `import { act, deepEqual, equal, focus, ok, press, render, settle, typeInto } from 'harness'
 import { Autocomplete } from './Autocomplete'
 
 /**
@@ -130,9 +130,18 @@ function controllableSearch() {
     search,
     calls,
     get abortCount() { return aborted },
-    /** Release one in-flight request. */
-    resolve(query: string, results: string[]) {
-      pending.get(query)?.(results)
+    /**
+     * Release one in-flight request.
+     *
+     * Wrapped in \`act\` because resolving the promise makes the component set
+     * state from a \`.then\`, which React otherwise reports as an update that
+     * escaped a test scope. The async form is required: the update lands in a
+     * microtask, so a synchronous \`act\` would have already exited.
+     */
+    async resolve(query: string, results: string[]) {
+      await act(async () => {
+        pending.get(query)?.(results)
+      })
     },
   }
 }
@@ -165,7 +174,7 @@ export async function testShowsResultsForWhatWasTyped() {
 
   await typeText(view.find('[data-testid="input"]')!, 'cat')
   await settle(120)
-  api.resolve('cat', ['cat', 'catalogue'])
+  await api.resolve('cat', ['cat', 'catalogue'])
   await settle(30)
 
   deepEqual(options(view), ['cat', 'catalogue'])
@@ -199,9 +208,9 @@ export async function testAStaleResponseDoesNotOverwriteANewerOne() {
   await settle(40)
 
   // The newer one lands first, then the older straggler arrives.
-  api.resolve('cat', ['cat', 'catalogue'])
+  await api.resolve('cat', ['cat', 'catalogue'])
   await settle(20)
-  api.resolve('ca', ['car', 'cardigan', 'cannot'])
+  await api.resolve('ca', ['car', 'cardigan', 'cannot'])
   await settle(40)
 
   deepEqual(
@@ -222,7 +231,7 @@ export async function testArrowKeysAndEnterSelectAnOption() {
 
   typeInto(input as HTMLInputElement, 'ca')
   await settle(40)
-  api.resolve('ca', ['car', 'cardigan', 'cannot'])
+  await api.resolve('ca', ['car', 'cardigan', 'cannot'])
   await settle(30)
 
   focus(input)
@@ -242,7 +251,7 @@ export async function testEscapeClosesTheList() {
 
   typeInto(input as HTMLInputElement, 'ca')
   await settle(40)
-  api.resolve('ca', ['car', 'cardigan'])
+  await api.resolve('ca', ['car', 'cardigan'])
   await settle(30)
   ok(view.find('[data-testid="listbox"]') !== null, 'the list should be open first')
 
@@ -260,7 +269,7 @@ export async function testShowsAnEmptyStateWhenNothingMatches() {
 
   typeInto(view.find('[data-testid="input"]') as HTMLInputElement, 'zzz')
   await settle(40)
-  api.resolve('zzz', [])
+  await api.resolve('zzz', [])
   await settle(30)
 
   ok(
@@ -280,7 +289,7 @@ export async function testIsAnAccessibleCombobox() {
 
   typeInto(input as HTMLInputElement, 'ca')
   await settle(40)
-  api.resolve('ca', ['car', 'cardigan'])
+  await api.resolve('ca', ['car', 'cardigan'])
   await settle(30)
 
   equal(input.getAttribute('aria-expanded'), 'true', 'aria-expanded should be true when open')

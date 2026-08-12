@@ -24,7 +24,9 @@ import {
   recordTranscript,
   type RoundMeta,
 } from '@/lib/session/record'
+import { clearDraft, readDraft, writeDraft } from '@/lib/session/drafts'
 import { Editor } from './Editor'
+import { SolutionPanel } from './SolutionPanel'
 import { SessionBar } from './SessionBar'
 import { VoicePanel } from './VoicePanel'
 import { HintPanel, type Hint } from './HintPanel'
@@ -62,6 +64,21 @@ function initialDrafts(problem: ClientProblem): Drafts {
   return drafts
 }
 
+/**
+ * Starter code overlaid with anything saved from a previous visit.
+ *
+ * Merged per file rather than replaced wholesale, so a problem that gains a file
+ * after you last worked on it still shows that file instead of vanishing it.
+ */
+function restoreDrafts(problem: ClientProblem): Drafts {
+  const drafts = initialDrafts(problem)
+  for (const language of supportedLanguages(problem)) {
+    const saved = readDraft(problem.slug, language)
+    if (saved) drafts[language] = { ...drafts[language], ...saved }
+  }
+  return drafts
+}
+
 export function InterviewRoom({ problem }: { problem: ClientProblem }) {
   // Not every problem offers both languages — a SQL problem needs Pyodide's
   // sqlite3, a React problem is TypeScript by nature — so the default comes from
@@ -71,6 +88,17 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
 
   // Per-language drafts, so switching to compare approaches doesn't destroy work.
   const [drafts, setDrafts] = useState<Drafts>(() => initialDrafts(problem))
+
+  // Saved work is loaded after mount, never during render: there is no
+  // localStorage on the server, and seeding state from it directly renders
+  // different markup on each side and fails hydration.
+  useEffect(() => {
+    const restore = () => setDrafts(restoreDrafts(problem))
+    restore()
+  }, [problem])
+
+  /** Set briefly by Cmd-S, purely so the reflex gets an acknowledgement. */
+  const [savedAt, setSavedAt] = useState<number | null>(null)
 
   const files = useMemo(() => initialFiles(problem, language), [problem, language])
   const firstEditable = files.find((f) => !f.readOnly)?.path ?? files[0].path
@@ -86,7 +114,7 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
   // Both assist panels stay mounted and are hidden with CSS rather than
   // unmounted. Unmounting VoicePanel would tear down the WebSocket and the
   // microphone, so glancing at a hint would end the interview.
-  const [assistTab, setAssistTab] = useState<'interviewer' | 'hints'>('interviewer')
+  const [assistTab, setAssistTab] = useState<'interviewer' | 'hints' | 'solution'>('interviewer')
 
   const [summary, setSummary] = useState<RunSummary | null>(null)
   const [streaming, setStreaming] = useState<TestResult[]>([])
@@ -195,6 +223,18 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
     const timer = setTimeout(() => recordFiles(meta, currentFiles), 1500)
     return () => clearTimeout(timer)
   }, [meta, currentFiles])
+
+  // Continuous autosave, so a reload never costs the round. Cmd-S below only
+  // makes it visible; it is not what makes it happen.
+  useEffect(() => {
+    const timer = setTimeout(() => writeDraft(problem.slug, language, drafts[language]), 800)
+    return () => clearTimeout(timer)
+  }, [problem.slug, language, drafts])
+
+  const save = useCallback(() => {
+    writeDraft(problem.slug, language, drafts[language])
+    setSavedAt(Date.now())
+  }, [problem.slug, language, drafts])
 
   const onTranscript = useCallback(
     (lines: TranscriptLine[]) =>
@@ -305,6 +345,9 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
         initialFiles(problem, language).map((f) => [f.path, f.content]),
       ),
     }))
+    // Also forget the saved copy, or the next mount restores what was just
+    // discarded and Reset appears not to work.
+    clearDraft(problem.slug, language)
     setSummary(null)
     setStreaming([])
   }, [language, problem])
@@ -362,6 +405,12 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
               </button>
             ))}
           </div>
+
+          {savedAt !== null && (
+            <span key={savedAt} className="text-[11px] text-ink-2">
+              Saved
+            </span>
+          )}
 
           <button
             type="button"
@@ -452,6 +501,7 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
               readOnly={activeFile.readOnly ?? false}
               onChange={setCode}
               onRun={run}
+              onSave={save}
             />
           </div>
           <div className="flex h-[42%] min-h-[180px] shrink-0 overflow-hidden">
@@ -484,18 +534,18 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
             </div>
             <div className="flex w-[320px] shrink-0 flex-col border-t border-surface-3">
               <div className="flex shrink-0 border-b border-l border-surface-3 bg-surface-2">
-                {(['interviewer', 'hints'] as const).map((tab) => (
+                {(['interviewer', 'hints', 'solution'] as const).map((tab) => (
                   <button
                     key={tab}
                     type="button"
                     onClick={() => setAssistTab(tab)}
-                    className={`flex-1 px-3 py-1.5 text-[11px] uppercase tracking-wider transition-colors ${
+                    className={`flex-1 px-2 py-1.5 text-[10.5px] uppercase tracking-wider transition-colors ${
                       assistTab === tab
                         ? 'bg-surface-1 text-ink-0'
                         : 'text-ink-2 hover:text-ink-1'
                     }`}
                   >
-                    {tab === 'interviewer' ? 'Interviewer' : 'Hints'}
+                    {tab === 'interviewer' ? 'Interviewer' : tab === 'hints' ? 'Hints' : 'Solution'}
                   </button>
                 ))}
               </div>
@@ -519,6 +569,17 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
                   onHint={onHint}
                 />
               </div>
+              {/*
+                Mounted only when opened, unlike the other two. Those hold a
+                socket and a hint history that must survive tab switches; this
+                holds nothing, and not fetching the answer key until it is
+                actually asked for is the point.
+              */}
+              {assistTab === 'solution' && (
+                <div className="min-h-0 flex-1">
+                  <SolutionPanel problemSlug={problem.slug} language={language} />
+                </div>
+              )}
             </div>
           </div>
         </section>

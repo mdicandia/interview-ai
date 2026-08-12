@@ -21,17 +21,37 @@ interface EditorProps {
   readOnly?: boolean
   /** Cmd/Ctrl+Enter runs the tests, matching the muscle memory of most REPLs. */
   onRun?: () => void
+  /**
+   * Cmd/Ctrl+S. Drafts are saved continuously anyway, so this only confirms it —
+   * but the keystroke is pure reflex under pressure, and without a binding the
+   * browser answers it with a "save this page" dialog over your editor.
+   */
+  onSave?: () => void
 }
 
+/**
+ * `jsx: true` is not optional here.
+ *
+ * Frontend problems are `.tsx` files, and without it the parser treats `<div>`
+ * as a comparison operator — so highlighting collapses into nonsense partway
+ * down any component and never recovers.
+ */
 const languageExtension = (language: Language) =>
-  language === 'python' ? python() : javascript({ typescript: true })
+  language === 'python' ? python() : javascript({ typescript: true, jsx: true })
 
 /**
  * CodeMirror lives outside React's render cycle: the view owns the DOM and its own
  * state, so it is created once and then reconfigured imperatively. Recreating it on
  * every render would drop the cursor, selection, and undo history on each keystroke.
  */
-export function Editor({ value, language, onChange, readOnly = false, onRun }: EditorProps) {
+export function Editor({
+  value,
+  language,
+  onChange,
+  readOnly = false,
+  onRun,
+  onSave,
+}: EditorProps) {
   const host = useRef<HTMLDivElement>(null)
   const view = useRef<EditorView | null>(null)
   const languageCompartment = useRef(new Compartment())
@@ -42,9 +62,11 @@ export function Editor({ value, language, onChange, readOnly = false, onRun }: E
   // mutating a ref on a discarded render leaves it pointing at a stale closure.
   const onChangeRef = useRef(onChange)
   const onRunRef = useRef(onRun)
+  const onSaveRef = useRef(onSave)
   useEffect(() => {
     onChangeRef.current = onChange
     onRunRef.current = onRun
+    onSaveRef.current = onSave
   })
 
   useEffect(() => {
@@ -66,6 +88,14 @@ export function Editor({ value, language, onChange, readOnly = false, onRun }: E
             preventDefault: true,
             run: () => {
               onRunRef.current?.()
+              return true
+            },
+          },
+          {
+            key: 'Mod-s',
+            preventDefault: true,
+            run: () => {
+              onSaveRef.current?.()
               return true
             },
           },

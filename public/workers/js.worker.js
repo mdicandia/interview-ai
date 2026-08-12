@@ -349,6 +349,19 @@ ${HARNESS_MODULE}
 
 import { createRoot, act } from 'react'
 
+/**
+ * Re-exported so a test can wrap its own asynchronous state changes.
+ *
+ * The helpers below cover anything *they* trigger, but a test that resolves a
+ * promise the component is awaiting causes an update React never saw enter an
+ * act scope — and warns about it. Awaiting the async form of act around the
+ * release flushes the microtask inside the scope.
+ *
+ * No backticks in this comment: it lives inside a template literal, and one
+ * would end the string here rather than at the intended place.
+ */
+export { act }
+
 function mountPoint() {
   const root = document.getElementById('root')
   root.innerHTML = ''

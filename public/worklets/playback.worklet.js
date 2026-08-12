@@ -13,14 +13,24 @@
  * here, the interviewer keeps talking over the candidate for that full second.
  */
 
-// Two seconds at the 24kHz playback rate. Large enough to ride out network
-// jitter, small enough that a flush never has much to throw away.
+// Thirty seconds at the 24kHz playback rate.
+//
+// This was two seconds, sized for a hosted service that streamed audio in small
+// chunks roughly as fast as it was spoken. The local model does not: it
+// synthesises a whole sentence and hands it over at once, so a six-second reply
+// arrives as 144,000 samples in a single message. Against a 48,000-sample buffer
+// that overran instantly and the overrun handler dropped the *oldest* samples —
+// which is to say the beginning of every long sentence was silently discarded.
+// Heard as the interviewer skipping words and phrases.
+//
+// A large buffer costs nothing here. `flush` resets the pointers rather than
+// draining, so barge-in is O(1) no matter how much is queued.
 //
 // Tied to PLAYBACK_SAMPLE_RATE in server/protocol.ts, which this file cannot
 // import — worklets are served as plain JS from /public and resolve nothing from
 // the build. If that rate changes, change this too, or the buffer silently
 // becomes a different number of seconds.
-const CAPACITY = 48000
+const CAPACITY = 720000
 
 class PlaybackProcessor extends AudioWorkletProcessor {
   constructor() {
@@ -52,6 +62,15 @@ class PlaybackProcessor extends AudioWorkletProcessor {
         // Overrun. Dropping the oldest sample keeps latency bounded — the
         // alternative is an ever-growing lag between what the model said and
         // what the candidate hears.
+        //
+        // With 30 seconds of capacity this should now be unreachable for any
+        // single reply. If it ever fires again the symptom is words going
+        // missing from the *start* of a sentence, which sounds like a synthesis
+        // fault rather than a buffer one — hence the warning.
+        if (!this._warnedOverrun) {
+          this._warnedOverrun = true
+          this.port.postMessage({ type: 'overrun' })
+        }
         this._read = (this._read + 1) % CAPACITY
         this._available--
       }

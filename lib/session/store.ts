@@ -115,31 +115,41 @@ export function useSession() {
     setState(next)
   }, [])
 
-  const goToStage = useCallback(
-    (index: number) => {
-      setState((current) => {
-        if (!current || index < 0 || index >= current.stages.length) return current
-        const settled = settleClock(current)
-        // Moving to a new stage starts its clock; the previous stage's time is
-        // banked and stays visible in the session summary.
-        const next = { ...settled, currentIndex: index, runningSince: Date.now() }
-        write(next)
-        return next
-      })
-    },
-    [],
-  )
+  /*
+   * These read storage directly rather than going through a `setState` updater.
+   *
+   * `write` dispatches a change event synchronously, and every other mounted
+   * `useSession` answers it by calling `setState`. Done from inside an updater —
+   * which React may run during a render pass — that is a state update to one
+   * component while a different one is rendering, and React says so:
+   *
+   *   Cannot update a component (`InterviewRoom`) while rendering a different
+   *   component (`SessionBar`).
+   *
+   * Storage is the source of truth anyway, so reading it is not a workaround.
+   * Both of these only ever run from a click handler, where a synchronous write
+   * and broadcast is exactly right.
+   */
+  const goToStage = useCallback((index: number) => {
+    const current = read()
+    if (!current || index < 0 || index >= current.stages.length) return
+    const settled = settleClock(current)
+    // Moving to a new stage starts its clock; the previous stage's time is
+    // banked and stays visible in the session summary.
+    const next = { ...settled, currentIndex: index, runningSince: Date.now() }
+    write(next)
+    setState(next)
+  }, [])
 
   const togglePause = useCallback(() => {
-    setState((current) => {
-      if (!current) return current
-      const next =
-        current.runningSince === null
-          ? { ...current, runningSince: Date.now() }
-          : settleClock(current)
-      write(next)
-      return next
-    })
+    const current = read()
+    if (!current) return
+    const next =
+      current.runningSince === null
+        ? { ...current, runningSince: Date.now() }
+        : settleClock(current)
+    write(next)
+    setState(next)
   }, [])
 
   const finish = useCallback(() => {

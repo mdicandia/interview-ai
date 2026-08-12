@@ -51,7 +51,16 @@ export function SessionPicker({ catalogue }: { catalogue: CatalogueEntry[] }) {
   return (
     <div className="mx-auto flex min-h-screen max-w-3xl flex-col px-6 py-14">
       <header className="mb-8">
-        <h1 className="text-xl font-medium text-ink-0">Live coding practice</h1>
+        <div className="flex items-baseline gap-4">
+          <h1 className="text-xl font-medium text-ink-0">Live coding practice</h1>
+          <button
+            type="button"
+            onClick={() => router.push('/history')}
+            className="ml-auto rounded border border-surface-3 px-2.5 py-1 text-[12px] text-ink-2 transition-colors hover:border-accent-dim hover:text-accent"
+          >
+            Progress
+          </button>
+        </div>
         <p className="mt-1.5 text-[13px] text-ink-1">
           Run a full loop, or pick a single problem. Talk through it out loud — the
           interviewer listens, and the report afterwards is built from what you said.

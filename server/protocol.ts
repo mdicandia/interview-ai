@@ -63,6 +63,17 @@ export type ClientMessage =
    */
   | { type: 'mic'; enabled: boolean }
   /**
+   * Push-to-talk. The candidate holds a key or button while speaking.
+   *
+   * When this is in use the server stops trusting Deepgram's endpointing to
+   * decide when a turn ended, and waits for `holding: false` instead. Silence is
+   * a terrible signal for "I have finished my thought" while someone is working
+   * through a problem: pausing to read a line is indistinguishable from
+   * finishing a sentence, so the interviewer talks over you exactly when you are
+   * concentrating hardest.
+   */
+  | { type: 'talk'; holding: boolean }
+  /**
    * The candidate took a text hint. Told to the interviewer so it doesn't
    * re-offer the same nudge, and so the report can weigh it — asking for help is
    * a signal a real interviewer would remember.

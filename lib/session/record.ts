@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import type { Language } from '@/lib/problems/types'
+import { recordAttempts } from './history'
 
 /**
  * Everything that happened during a session, accumulated as it happens.
@@ -79,6 +80,15 @@ export interface RoundRecord {
   hints: HintRecord[]
   runs: RunRecord[]
   observations: ObservationRecord[]
+  /**
+   * Whether the reference solution was read during this round.
+   *
+   * Recorded because the report and the history would otherwise credit a green
+   * suite that was copied. It is not a punishment — reading the solution when
+   * genuinely stuck is the right call — but a run of solved rounds means
+   * something different if half of them were read rather than worked out.
+   */
+  solutionRevealed?: boolean
   /** Editor contents as they stood last time anything was recorded. */
   files: { path: string; content: string }[]
 }
@@ -222,6 +232,12 @@ export function recordObservations(meta: RoundMeta, observations: ObservationRec
   })
 }
 
+export function recordSolutionRevealed(meta: RoundMeta): void {
+  mutate(meta, (round) => {
+    round.solutionRevealed = true
+  })
+}
+
 export function recordHint(meta: RoundMeta, hint: HintRecord): void {
   mutate(meta, (round) => {
     round.hints.push(hint)
@@ -255,6 +271,11 @@ export function sealRecord(elapsedBySlug: Record<string, number>): SessionRecord
   }
   record.endedAt = Date.now()
   write(record)
+
+  // The single choke point where a session is finished, so the only place that
+  // needs to append to the permanent history. `recordAttempts` is idempotent per
+  // round, because the report page seals again for a standalone round.
+  recordAttempts(record)
   return record
 }
 

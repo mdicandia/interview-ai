@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AxisVerdict, DiagnosisKind, Report, RoundVerdict } from '@/server/interview/report'
 import { hasEvidence, sealRecord, useRecord, type SessionRecord } from '@/lib/session/record'
+import { attachScores } from '@/lib/session/history'
 
 /**
  * The post-session report.
@@ -217,6 +218,18 @@ export function ReportView() {
         return
       }
       writeCached(current.id, payload)
+      // The scores belong in the permanent history too — they are the only
+      // measure of whether the *explaining* is improving, which the pass/fail
+      // counts cannot show.
+      attachScores(
+        current.id,
+        payload.rounds.map((round) => ({
+          slug: round.slug,
+          content: round.content.score,
+          delivery: round.delivery?.score ?? null,
+          diagnosisKind: round.diagnosisKind,
+        })),
+      )
       setOutcome({ report: payload })
     } catch (e) {
       setOutcome({ error: e instanceof Error ? e.message : String(e) })

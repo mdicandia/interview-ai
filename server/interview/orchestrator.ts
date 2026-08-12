@@ -91,6 +91,9 @@ export class InterviewSession {
 
   #backchannel: Backchannel = loadBackchannels()
 
+  /** Set once the browser drives turns explicitly; see `setTalking`. */
+  #pushToTalk = false
+
   #idleTimer: ReturnType<typeof setTimeout> | null = null
   #lastNudgeAt = 0
   #lastCodeChangeAt = Date.now()
@@ -134,7 +137,11 @@ export class InterviewSession {
         this.#pending.push(text)
         this.#config.send({ type: 'transcript', role: 'candidate', text, final: true })
       },
-      onUtteranceEnd: () => void this.#onUtteranceEnd(),
+      // Ignored entirely once push-to-talk is in use: the candidate says when
+      // they are done, and a pause for thought must not pre-empt them.
+      onUtteranceEnd: () => {
+        if (!this.#pushToTalk) void this.#onUtteranceEnd()
+      },
       onError: (error) => this.#config.send({ type: 'error', message: error.message, fatal: false }),
       onClose: () => {},
     })
@@ -146,6 +153,29 @@ export class InterviewSession {
   /** Raw microphone audio from the browser. */
   pushAudio(pcm: Buffer): void {
     this.#stt?.send(pcm)
+  }
+
+  /**
+   * Push-to-talk: the candidate is holding the talk key, or has let go.
+   *
+   * Latches on first use. Once the browser has said it is driving turns
+   * explicitly, Deepgram's endpointing stops being allowed to end one — mixing
+   * the two would let a mid-sentence pause fire a reply while the candidate is
+   * still holding the key down.
+   */
+  setTalking(holding: boolean): void {
+    this.#pushToTalk = true
+
+    if (holding) {
+      // Same handling as any other detected speech, so interrupting the
+      // interviewer by pressing the key works exactly like interrupting it by
+      // talking does.
+      this.#onSpeechStarted()
+      return
+    }
+
+    this.#setState('idle')
+    void this.#onUtteranceEnd()
   }
 
   /** Latest editor contents. Also counts as activity for the nudge timer. */
@@ -463,6 +493,9 @@ export class InterviewSession {
 
   async #onIdle(): Promise<void> {
     if (this.#state !== 'idle') return
+    // Nudging is a reaction to silence, and silence means nothing when the
+    // candidate is the one deciding when to speak.
+    if (this.#pushToTalk) return
 
     // Don't badger someone who is making progress quietly, and don't nudge twice
     // in quick succession — an interviewer who fills every silence is worse than

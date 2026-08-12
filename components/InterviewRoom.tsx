@@ -20,6 +20,7 @@ import {
   recordFiles,
   recordHint,
   recordObservations,
+  recordSolutionRevealed,
   recordRun,
   recordTranscript,
   type RoundMeta,
@@ -577,7 +578,11 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
               */}
               {assistTab === 'solution' && (
                 <div className="min-h-0 flex-1">
-                  <SolutionPanel problemSlug={problem.slug} language={language} />
+                  <SolutionPanel
+                    problemSlug={problem.slug}
+                    language={language}
+                    onRevealed={() => recordSolutionRevealed(meta)}
+                  />
                 </div>
               )}
             </div>

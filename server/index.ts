@@ -158,6 +158,10 @@ server.on('connection', (socket: WebSocket) => {
         // The browser gates its own microphone; nothing to do server-side yet.
         break
 
+      case 'talk':
+        session?.setTalking(message.holding)
+        break
+
       case 'end':
         reportUsage()
         await session?.end()

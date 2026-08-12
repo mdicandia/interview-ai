@@ -106,6 +106,45 @@ export function VoicePanel({
   const live = snapshot.status === 'live'
   const connecting = snapshot.status === 'connecting'
 
+  /*
+   * Hold to talk, on the button or on the spacebar.
+   *
+   * The spacebar is bound only when the editor does not have focus, which is
+   * what makes it usable: you are typing most of the time, and a shortcut that
+   * inserts spaces into your code would be worse than no shortcut. `repeat` is
+   * ignored because holding a key fires keydown continuously.
+   */
+  useEffect(() => {
+    if (!live) return
+
+    const typing = () => {
+      const active = document.activeElement
+      return active instanceof HTMLElement && (active.isContentEditable || active.closest('.cm-editor') !== null)
+    }
+
+    const down = (event: KeyboardEvent) => {
+      if (event.code !== 'Space' || event.repeat || typing()) return
+      event.preventDefault()
+      client.setTalking(true)
+    }
+    const up = (event: KeyboardEvent) => {
+      if (event.code !== 'Space' || typing()) return
+      event.preventDefault()
+      client.setTalking(false)
+    }
+    // Releasing outside the window would otherwise leave the microphone open.
+    const blur = () => client.setTalking(false)
+
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup', up)
+    window.addEventListener('blur', blur)
+    return () => {
+      window.removeEventListener('keydown', down)
+      window.removeEventListener('keyup', up)
+      window.removeEventListener('blur', blur)
+    }
+  }, [client, live])
+
   return (
     <section className="flex h-full min-h-0 flex-col border-l border-surface-3 bg-surface-1">
       <header className="flex shrink-0 items-center gap-2 border-b border-surface-3 px-3 py-2">
@@ -126,19 +165,6 @@ export function VoicePanel({
         )}
 
         <div className="ml-auto flex items-center gap-1.5">
-          {live && (
-            <button
-              type="button"
-              onClick={() => client.toggleMute()}
-              className={`rounded border px-2 py-0.5 text-[11px] transition-colors ${
-                snapshot.muted
-                  ? 'border-fail/50 text-fail'
-                  : 'border-surface-3 text-ink-2 hover:text-ink-0'
-              }`}
-            >
-              {snapshot.muted ? 'Unmute' : 'Mute'}
-            </button>
-          )}
           <button
             type="button"
             disabled={connecting}
@@ -161,11 +187,42 @@ export function VoicePanel({
         </p>
       )}
 
+      {live && (
+        <div className="shrink-0 border-b border-surface-3 px-3 py-2.5">
+          {/*
+            Hold to talk, rather than the interviewer guessing from silence when
+            a thought has finished. A pause to read a line is indistinguishable
+            from the end of a sentence, so guessing meant being interrupted
+            exactly while concentrating.
+          */}
+          <button
+            type="button"
+            onPointerDown={(event) => {
+              event.currentTarget.setPointerCapture(event.pointerId)
+              client.setTalking(true)
+            }}
+            onPointerUp={() => client.setTalking(false)}
+            onPointerCancel={() => client.setTalking(false)}
+            className={`w-full rounded-md border px-3 py-2 text-[12px] font-medium transition-colors ${
+              snapshot.holding
+                ? 'border-pass bg-pass/15 text-pass'
+                : 'border-surface-3 text-ink-1 hover:border-accent-dim hover:text-ink-0'
+            }`}
+          >
+            {snapshot.holding ? 'Listening — release when done' : 'Hold to talk'}
+          </button>
+          <p className="mt-1.5 text-center text-[10.5px] text-ink-2">
+            or hold <kbd className="rounded border border-surface-3 px-1">space</kbd> when
+            you&apos;re not in the editor
+          </p>
+        </div>
+      )}
+
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2.5">
         {snapshot.transcript.length === 0 ? (
           <p className="text-[12px] leading-relaxed text-ink-2">
             {live
-              ? 'Say hello, or just start talking through the problem.'
+              ? 'Hold the button and talk through the problem. The interviewer waits until you let go, so pauses are yours to take.'
               : 'Press Start interview. The interviewer will hear you and can see your code as you write it.'}
           </p>
         ) : (

@@ -34,6 +34,8 @@ export interface VoiceSnapshot {
   /** True while the interviewer's audio is actually coming out of the speakers. */
   speaking: boolean
   muted: boolean
+  /** True while the talk key is held down. Drives the on-screen indicator. */
+  holding: boolean
   transcript: TranscriptLine[]
   /**
    * Moments the interviewer flagged for the report.
@@ -51,6 +53,7 @@ const INITIAL: VoiceSnapshot = {
   turn: 'idle',
   speaking: false,
   muted: false,
+  holding: false,
   transcript: [],
   observations: [],
   error: null,
@@ -110,6 +113,10 @@ export class VoiceClient {
       })
       return
     }
+    // Starts muted: with push-to-talk the microphone is closed until you ask
+    // for it, which is both the turn-taking contract and the reason an idle
+    // session costs nothing to keep open.
+    audio.setMuted(true)
     this.#audio = audio
 
     const socket = new WebSocket(options.url)
@@ -212,6 +219,20 @@ export class VoiceClient {
     compileError?: string
   }): void {
     this.#send({ type: 'test-results', ...results })
+  }
+
+  /**
+   * Push-to-talk. Opens the microphone only while held.
+   *
+   * Two things fall out of this beyond the turn-taking. The microphone is muted
+   * the rest of the time, so Deepgram — which bills the audio it receives — sees
+   * only what you actually said. And nothing you type, mutter, or play in
+   * another tab reaches the transcript.
+   */
+  setTalking(holding: boolean): void {
+    this.#audio?.setMuted(!holding)
+    this.#update({ holding })
+    this.#send({ type: 'talk', holding })
   }
 
   /** Tell the interviewer a text hint was taken, so it doesn't repeat it. */

@@ -5,11 +5,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { ClientQuestion } from '@/questions'
 import { DISCUSSION_FORMAT_LABELS } from '@/lib/problems/types'
-import type { Observation, TranscriptLine } from '@/lib/client/voice'
+import type { Observation, RoundOutcome, TranscriptLine } from '@/lib/client/voice'
 import { useSession } from '@/lib/session/store'
 import {
   checkpointRound,
   enterRound,
+  recordConcluded,
+  recordObjectives,
   recordObservations,
   recordTranscript,
 } from '@/lib/session/record'
@@ -66,13 +68,13 @@ export function QuestionRoom({ question }: { question: ClientQuestion }) {
   // Same as a coding round: the attempt is written on the way out, so a spoken
   // round counts even if the session is never formally ended.
   useEffect(() => {
-    const capture = () => checkpointRound()
+    const capture = () => checkpointRound(question.slug)
     window.addEventListener('pagehide', capture)
     return () => {
       window.removeEventListener('pagehide', capture)
       capture()
     }
-  }, [])
+  }, [question.slug])
 
   const onTranscript = useCallback(
     (lines: TranscriptLine[]) =>
@@ -85,6 +87,29 @@ export function QuestionRoom({ question }: { question: ClientQuestion }) {
 
   const onObservations = useCallback(
     (observations: Observation[]) => recordObservations(meta, observations),
+    [meta],
+  )
+
+  /*
+   * Coverage and the closing verdict are written to the record as they happen.
+   *
+   * Without them a spoken round has no evidence of how it went — it runs no
+   * tests — and every one of them was filed as "abandoned" in the history no
+   * matter how well it actually went.
+   */
+  const onObjectives = useCallback(
+    (objectives: { covered: number[]; total: number; essential: number }) =>
+      recordObjectives(meta, {
+        covered: objectives.covered.length,
+        total: objectives.total,
+        essential: objectives.essential,
+      }),
+    [meta],
+  )
+
+  const onComplete = useCallback(
+    (outcome: RoundOutcome) =>
+      recordConcluded(meta, { verdict: outcome.verdict, summary: outcome.summary }),
     [meta],
   )
 
@@ -203,6 +228,8 @@ export function QuestionRoom({ question }: { question: ClientQuestion }) {
             onRunTests={() => {}}
             onTranscript={onTranscript}
             onObservations={onObservations}
+            onObjectives={onObjectives}
+            onComplete={onComplete}
           />
         </section>
       </main>

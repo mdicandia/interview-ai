@@ -46,50 +46,89 @@ function Delta({ value, unit }: { value: number; unit: string }) {
   )
 }
 
-function AttemptRow({ attempt, index }: { attempt: Attempt; index: number }) {
+/** A five-pip score, so content and delivery are comparable at a glance. */
+function Pips({ score, label }: { score: number; label: string }) {
   return (
-    <li className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-surface-3 py-2">
-      <span className="w-6 shrink-0 font-mono text-[11px] text-ink-2">#{index + 1}</span>
+    <span className="flex items-center gap-1" title={`${label} ${score} of 5`}>
+      <span className="text-[10.5px] uppercase tracking-wide text-ink-2">{label}</span>
+      <span className="flex gap-0.5">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <span
+            key={n}
+            className={`size-1 rounded-full ${n <= score ? 'bg-accent' : 'bg-surface-3'}`}
+          />
+        ))}
+      </span>
+    </span>
+  )
+}
+
+function AttemptRow({ attempt, index }: { attempt: Attempt; index: number }) {
+  // A spoken round counts objectives; a coding round counts tests. Same slots.
+  const unit = attempt.source === 'question' ? 'points' : 'tests'
+  const ratio =
+    attempt.total !== undefined && attempt.total > 0 ? (attempt.passed ?? 0) / attempt.total : null
+
+  return (
+    <li className="group grid grid-cols-[auto_7rem_1fr_auto] items-center gap-x-4 rounded-md px-3 py-2.5 transition-colors hover:bg-surface-1">
+      <span className="font-mono text-[11px] text-ink-2">#{index + 1}</span>
 
       <span
-        className={`shrink-0 rounded border px-1.5 py-px text-[10px] uppercase tracking-wide ${OUTCOME_STYLE[attempt.outcome]}`}
+        className={`justify-self-start rounded border px-1.5 py-px text-[10px] uppercase tracking-wide ${OUTCOME_STYLE[attempt.outcome]}`}
       >
         {OUTCOME_LABEL[attempt.outcome]}
       </span>
 
-      {attempt.total !== undefined && (
-        <span className="shrink-0 tabular-nums text-[12px] text-ink-1">
-          {attempt.passed}/{attempt.total} tests
-        </span>
-      )}
+      <span className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+        {ratio !== null && (
+          <span className="flex items-center gap-1.5">
+            {/* A bar rather than a fraction: the shape of a repeat reads faster. */}
+            <span className="h-1 w-16 overflow-hidden rounded-full bg-surface-3">
+              <span
+                className={`block h-full rounded-full ${ratio === 1 ? 'bg-pass' : 'bg-warn'}`}
+                style={{ width: `${Math.round(ratio * 100)}%` }}
+              />
+            </span>
+            <span className="tabular-nums text-[11.5px] text-ink-1">
+              {attempt.passed}/{attempt.total} {unit}
+            </span>
+          </span>
+        )}
 
-      <span className="shrink-0 tabular-nums text-[12px] text-ink-1">
-        {formatDuration(attempt.elapsedMs)}
+        <span className="tabular-nums text-[11.5px] text-ink-1">
+          {formatDuration(attempt.elapsedMs)}
+        </span>
+
+        {attempt.hintsUsed > 0 && (
+          <span className="text-[11.5px] text-ink-2">
+            {attempt.hintsUsed} hint{attempt.hintsUsed === 1 ? '' : 's'}
+          </span>
+        )}
+
+        {attempt.verdict && (
+          <span className="text-[11.5px] text-ink-2">verdict {attempt.verdict}</span>
+        )}
+
+        {attempt.solutionRevealed && (
+          <span className="text-[11.5px] text-warn">read the solution</span>
+        )}
+
+        {attempt.source === 'problem' && !attempt.spokeAloud && (
+          <span className="text-[11.5px] text-ink-2">silent</span>
+        )}
+
+        {attempt.content !== undefined && <Pips score={attempt.content} label="content" />}
+        {attempt.delivery !== undefined && <Pips score={attempt.delivery} label="delivery" />}
       </span>
 
-      <span className="shrink-0 text-[12px] text-ink-2">
-        {attempt.hintsUsed === 0 ? 'no hints' : `${attempt.hintsUsed} hint${attempt.hintsUsed === 1 ? '' : 's'}`}
-      </span>
-
-      {attempt.solutionRevealed && (
-        <span className="shrink-0 text-[12px] text-warn">read the solution</span>
-      )}
-
-      {!attempt.spokeAloud && <span className="shrink-0 text-[12px] text-ink-2">silent</span>}
-
-      {attempt.content !== undefined && (
-        <span className="shrink-0 text-[12px] text-ink-1">
-          content {attempt.content}/5
-          {attempt.delivery !== undefined ? ` · delivery ${attempt.delivery}/5` : ''}
-        </span>
-      )}
-
-      <span className="ml-auto shrink-0 text-[11px] text-ink-2">
+      <span className="justify-self-end text-[11px] text-ink-2">
         {new Date(attempt.endedAt).toLocaleDateString()}
       </span>
 
       {attempt.note && (
-        <span className="w-full text-[11.5px] leading-relaxed text-ink-2">{attempt.note}</span>
+        <span className="col-span-4 mt-1 text-[11.5px] leading-relaxed text-ink-2">
+          {attempt.note}
+        </span>
       )}
     </li>
   )
@@ -118,10 +157,17 @@ export function HistoryView() {
         </Link>
         <h1 className="text-[14px] font-medium text-ink-0">Progress</h1>
         {totals.all > 0 && (
-          <p className="ml-auto text-[11.5px] text-ink-2">
-            {totals.all} attempt{totals.all === 1 ? '' : 's'} · {totals.solved} solved ·{' '}
-            {totals.spoken} spoken aloud
-          </p>
+          <div className="ml-auto flex items-baseline gap-4 text-[11.5px]">
+            <span className="text-ink-1">
+              <span className="tabular-nums text-ink-0">{totals.all}</span> attempts
+            </span>
+            <span className="text-ink-1">
+              <span className="tabular-nums text-pass">{totals.solved}</span> solved
+            </span>
+            <span className="text-ink-1">
+              <span className="tabular-nums text-accent">{totals.spoken}</span> spoken aloud
+            </span>
+          </div>
         )}
       </header>
 
@@ -147,8 +193,11 @@ export function HistoryView() {
 
         {loaded &&
           groups.map((group) => (
-            <section key={group.slug} className="border-t border-surface-3 py-6 first:border-t-0">
-              <header className="mb-2 flex flex-wrap items-baseline gap-3">
+            <section
+              key={group.slug}
+              className="mb-3 overflow-hidden rounded-lg border border-surface-3 bg-surface-1/40"
+            >
+              <header className="flex flex-wrap items-baseline gap-3 border-b border-surface-3 px-4 py-3">
                 <h2 className="text-[14.5px] text-ink-0">{group.title}</h2>
                 <span className="text-[11.5px] text-ink-2">
                   {group.attempts.length} attempt{group.attempts.length === 1 ? '' : 's'}
@@ -179,7 +228,7 @@ export function HistoryView() {
                 </Link>
               </header>
 
-              <ul className="flex flex-col">
+              <ul className="flex flex-col divide-y divide-surface-3/60 p-1">
                 {group.attempts.map((attempt, i) => (
                   <AttemptRow key={attempt.id} attempt={attempt} index={i} />
                 ))}

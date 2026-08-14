@@ -44,6 +44,8 @@ export interface Attempt {
   content?: number
   delivery?: number
   diagnosisKind?: DiagnosisKind
+  /** The interviewer's own call on a spoken round. */
+  verdict?: 'strong' | 'solid' | 'mixed' | 'weak'
   /** Set when a row was entered by hand rather than observed. */
   note?: string
 }
@@ -77,6 +79,22 @@ function write(attempts: Attempt[]): void {
  * make the solve rate a measure of how often you opened a problem.
  */
 function outcomeOf(round: RoundRecord): Outcome {
+  /*
+   * A spoken round runs no tests, so the code path below would file every one of
+   * them as `abandoned` — a twenty-minute interview that went well was recorded
+   * as if it had never been opened. Coverage of the expected points is the
+   * equivalent signal, and the interviewer tallies it live.
+   */
+  if (round.source === 'question') {
+    const objectives = round.objectives
+    if (!objectives || objectives.total === 0) {
+      // Nothing tallied. Talking at all is more than abandoning it.
+      return round.transcript.length > 0 ? 'partial' : 'abandoned'
+    }
+    if (objectives.covered >= objectives.essential && objectives.essential > 0) return 'solved'
+    return objectives.covered > 0 ? 'partial' : 'not-solved'
+  }
+
   const last = round.runs[round.runs.length - 1]
   if (!last) return 'abandoned'
   if (last.total > 0 && last.passed === last.total) return 'solved'
@@ -97,7 +115,7 @@ function outcomeOf(round: RoundRecord): Outcome {
  * a *repeat attempt* is a new row: a repeat happens in a different session and
  * therefore gets a different id.
  */
-export function recordAttempts(record: SessionRecord): Attempt[] {
+export function recordAttempts(record: SessionRecord, activeSlug?: string): Attempt[] {
   const attempts = readHistory()
   // Sealing stamps authoritative per-round timings; before that they are
   // estimates, and an estimate must only ever be made once. See below.
@@ -120,6 +138,12 @@ export function recordAttempts(record: SessionRecord): Attempt[] {
       elapsedMs: round.elapsedMs > 0 ? round.elapsedMs : Date.now() - round.enteredAt,
       outcome: outcomeOf(round),
       ...(last ? { passed: last.passed, total: last.total } : {}),
+      // A spoken round reports coverage in the same two slots the test counts
+      // use, so the history renders one row shape rather than two.
+      ...(round.source === 'question' && round.objectives
+        ? { passed: round.objectives.covered, total: round.objectives.total }
+        : {}),
+      ...(round.concluded ? { verdict: round.concluded.verdict } : {}),
       hintsUsed: round.hints.length,
       solutionRevealed: round.solutionRevealed === true,
       spokeAloud: round.transcript.length > 0,
@@ -146,11 +170,24 @@ export function recordAttempts(record: SessionRecord): Attempt[] {
      * the accurate one. Sealing is the exception — it carries real per-stage
      * timings from the session clock, including pauses.
      */
+    /*
+     * Refreshed only for the round being left, or when sealing.
+     *
+     * Freezing on the very first write was wrong in the other direction:
+     * StrictMode mounts, unmounts and remounts, so the first checkpoint fires
+     * milliseconds after entering and froze the duration at 0:00 forever. And
+     * refreshing *every* round on every checkpoint was the original bug —
+     * leaving round three recharged round one for the whole session.
+     *
+     * Scoping to the active round gives both: the round you are leaving gets a
+     * correct final duration, and the ones you left earlier keep theirs.
+     */
     const previous = attempts[index]
+    const refresh = sealed || round.slug === activeSlug
     const merged: Attempt = {
       ...row,
-      endedAt: sealed ? row.endedAt : previous.endedAt,
-      elapsedMs: sealed ? row.elapsedMs : previous.elapsedMs,
+      endedAt: refresh ? row.endedAt : previous.endedAt,
+      elapsedMs: refresh ? row.elapsedMs : previous.elapsedMs,
       // Scores arrive later, from the report, and must survive a re-checkpoint.
       content: previous.content,
       delivery: previous.delivery,

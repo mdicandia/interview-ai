@@ -107,6 +107,16 @@ export class InterviewSession {
   /** Moments the interviewer flagged live, via `note_observation`. */
   readonly observations: Observation[] = []
 
+  /**
+   * Expected points ticked off so far, by 1-based index. Discussion rounds only.
+   *
+   * A Set because the model will sometimes tick the same point twice — it is
+   * told not to, but a duplicate must not make the progress bar exceed its own
+   * total.
+   */
+  readonly covered = new Set<number>()
+  #concluded = false
+
   constructor(config: SessionConfig) {
     this.#config = config
     this.#frozenPrefix = buildFrozenPrefix({ problem: config.problem, language: config.language })
@@ -474,12 +484,87 @@ export class InterviewSession {
           break
         }
 
+        case 'mark_covered': {
+          result = this.#markCovered(call.arguments)
+          break
+        }
+
+        case 'conclude_round': {
+          result = this.#concludeRound(call.arguments)
+          break
+        }
+
         default:
           result = `There is no tool called ${call.name}. Carry on without it.`
       }
 
       this.#history.push({ role: 'tool', content: result, toolCallId: call.id })
     }
+  }
+
+  /** Ordered essential-first, matching the numbering the prompt hands the model. */
+  #expectedPoints(): { text: string; essential: boolean }[] {
+    const problem = this.#config.problem
+    if (problem.kind !== 'discussion') return []
+    const essential = problem.expectedPoints.filter((p) => p.essential)
+    const bonus = problem.expectedPoints.filter((p) => !p.essential)
+    return [...essential, ...bonus].map((p) => ({
+      text: p.point,
+      essential: p.essential === true,
+    }))
+  }
+
+  #markCovered(raw: string): string {
+    const points = this.#expectedPoints()
+    let index: unknown
+    try {
+      index = (JSON.parse(raw || '{}') as { index?: unknown }).index
+    } catch {
+      return 'That call could not be read. Carry on.'
+    }
+
+    const n = typeof index === 'number' ? index : Number(index)
+    // Out-of-range indices are dropped rather than clamped: a model that
+    // hallucinated a point number has not observed anything, and inventing a
+    // tick would overstate the candidate's coverage in the report.
+    if (!Number.isInteger(n) || n < 1 || n > points.length) {
+      return `There is no point ${String(index)}. The points are numbered 1 to ${points.length}.`
+    }
+    if (this.covered.has(n)) return 'Already ticked. Carry on.'
+
+    this.covered.add(n)
+    this.#config.send({
+      type: 'objective',
+      covered: [...this.covered],
+      total: points.length,
+      essential: points.filter((p) => p.essential).length,
+    })
+    return `Point ${n} ticked. ${points.length - this.covered.size} left. Say nothing about it.`
+  }
+
+  #concludeRound(raw: string): string {
+    if (this.#concluded) return 'This round has already been concluded.'
+
+    let parsed: { verdict?: unknown; summary?: unknown }
+    try {
+      parsed = JSON.parse(raw || '{}') as typeof parsed
+    } catch {
+      return 'That call could not be read. Carry on.'
+    }
+
+    const allowed = ['strong', 'solid', 'mixed', 'weak'] as const
+    const verdict = allowed.find((v) => v === parsed.verdict) ?? 'mixed'
+    const summary = typeof parsed.summary === 'string' ? parsed.summary.trim() : ''
+
+    this.#concluded = true
+    this.#config.send({
+      type: 'round-complete',
+      verdict,
+      summary,
+      covered: [...this.covered],
+      points: this.#expectedPoints(),
+    })
+    return 'The round is closed and they have been shown how it went. Say your closing line and stop.'
   }
 
   /* ------------------------------------------------------------------- idle */

@@ -162,15 +162,23 @@ function buildDiscussionPrefix(problem: DiscussionProblem): string {
     }
   }
 
+  /*
+   * Numbered, because `mark_covered` addresses them by number.
+   *
+   * Essential points come first so the numbering is stable and the model can see
+   * at a glance how much of the required ground is left. The candidate never
+   * sees these numbers or this text.
+   */
   parts.push(
     '',
     '--- WHAT A GOOD ANSWER REACHES (never read this out) ---',
-    'Tick these off silently as they say them. Do not name one they have not reached;',
-    'ask a question that gives them the chance to get there themselves.',
+    'Call mark_covered with the number the moment they reach one, however clumsily worded.',
+    'Do not name a point they have not reached; ask a question that gives them the chance.',
     '',
     'Essential — a competent answer covers all of these:',
     ...essential.map(
-      (p) => `- ${p.point}${p.weakAnswer ? ` (a weak answer says instead: ${p.weakAnswer})` : ''}`,
+      (p, i) =>
+        `${i + 1}. ${p.point}${p.weakAnswer ? ` (a weak answer says instead: ${p.weakAnswer})` : ''}`,
     ),
   )
 
@@ -178,7 +186,7 @@ function buildDiscussionPrefix(problem: DiscussionProblem): string {
     parts.push(
       '',
       'Good to reach, but not required. Never treat one of these as a failure:',
-      ...bonus.map((p) => `- ${p.point}`),
+      ...bonus.map((p, i) => `${essential.length + i + 1}. ${p.point}`),
     )
   }
 
@@ -196,6 +204,7 @@ function buildDiscussionPrefix(problem: DiscussionProblem): string {
     'One question at a time. Two stacked questions get you an answer to neither.',
     'When they finish a thread, either probe it or move to the next gap. Do not summarise what they just said back to them.',
     'If they reach every essential point early, spend the remaining time on the follow-ups rather than winding up.',
+    'When the follow-ups are done, or they say they are finished, call conclude_round. They have no other way of learning the interview is over.',
     'If they say something wrong, do not correct it. Ask the question whose answer exposes it, and let them find it.',
     'If they ask you a question, answer briefly and hand it straight back.',
     '',

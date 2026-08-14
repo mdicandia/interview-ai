@@ -87,6 +87,52 @@ export const NOTE_OBSERVATION: ToolSpec = {
  */
 export const INTERVIEWER_TOOLS: ToolSpec[] = [NOTE_OBSERVATION, RUN_TESTS]
 
+export const MARK_COVERED: ToolSpec = {
+  name: 'mark_covered',
+  description:
+    'Tick off one of the numbered points from "WHAT A GOOD ANSWER REACHES" the moment the ' +
+    'candidate reaches it. Silent — never tell them a point was ticked, and never read the ' +
+    'point out. Call it as soon as they say the substance of it, however clumsily worded; ' +
+    'you are marking whether they know it, not whether they phrased it well. ' +
+    'Call it once per point. Do not tick a point they have not actually reached.',
+  parameters: {
+    type: 'object',
+    properties: {
+      index: {
+        type: 'number',
+        description: 'The number shown next to the point in the prompt, starting at 1.',
+      },
+    },
+    required: ['index'],
+  },
+}
+
+export const CONCLUDE_ROUND: ToolSpec = {
+  name: 'conclude_round',
+  description:
+    'End the round. Call this when they have covered everything essential and the follow-ups ' +
+    'are exhausted, or when they say they are done, or when the conversation has clearly run ' +
+    'its course. Say a short closing line in the same turn. ' +
+    'This is the only way the candidate finds out the interview is over, so do not leave a ' +
+    'finished round hanging \u2014 but equally, do not use it to escape a difficult moment.',
+  parameters: {
+    type: 'object',
+    properties: {
+      verdict: {
+        type: 'string',
+        enum: ['strong', 'solid', 'mixed', 'weak'],
+        description:
+          'How the answer stood up overall. Judge the substance reached, not the fluency.',
+      },
+      summary: {
+        type: 'string',
+        description: 'One or two sentences on how it went. The candidate reads this afterwards.',
+      },
+    },
+    required: ['verdict', 'summary'],
+  },
+}
+
 /**
  * The tools for one kind of round.
  *
@@ -96,7 +142,9 @@ export const INTERVIEWER_TOOLS: ToolSpec[] = [NOTE_OBSERVATION, RUN_TESTS]
  * worse than no tool at all.
  */
 export function toolsFor(kind: 'algorithm' | 'workspace' | 'discussion'): ToolSpec[] {
-  return kind === 'discussion' ? [NOTE_OBSERVATION] : INTERVIEWER_TOOLS
+  return kind === 'discussion'
+    ? [MARK_COVERED, CONCLUDE_ROUND, NOTE_OBSERVATION]
+    : INTERVIEWER_TOOLS
 }
 
 export interface Observation {

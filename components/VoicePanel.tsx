@@ -5,6 +5,7 @@ import type { Language } from '@/lib/problems/types'
 import {
   VoiceClient,
   type Observation,
+  type RoundOutcome,
   type TranscriptLine,
   type VoiceSnapshot,
 } from '@/lib/client/voice'
@@ -12,11 +13,26 @@ import type { TurnState } from '@/server/protocol'
 
 const VOICE_URL = process.env.NEXT_PUBLIC_VOICE_SERVER_URL ?? 'ws://localhost:8787'
 
+/*
+ * Labels say whose move it is, not what the machine is doing internally.
+ *
+ * "Listening" for an idle turn was actively misleading with push-to-talk — the
+ * microphone is closed, and the interviewer is waiting for you to open it. Being
+ * out of sync about whose turn it is was the single most confusing thing about
+ * talking to this.
+ */
 const TURN_LABEL: Record<TurnState, string> = {
-  idle: 'Listening',
+  idle: 'Your turn',
   listening: 'Hearing you',
-  thinking: 'Thinking',
+  thinking: 'Thinking…',
   speaking: 'Speaking',
+}
+
+const TURN_HINT: Record<TurnState, string> = {
+  idle: 'Hold to talk when you are ready',
+  listening: 'Release when you have finished the thought',
+  thinking: 'Composing a reply — it will speak in a moment',
+  speaking: 'Hold to talk if you want to cut in',
 }
 
 const TURN_COLOR: Record<TurnState, string> = {
@@ -42,6 +58,10 @@ export interface VoicePanelProps {
    * rendered — see the note on `VoiceSnapshot.observations`.
    */
   onObservations?: (observations: Observation[]) => void
+  /** Live coverage of the round's expected points. Spoken rounds only. */
+  onObjectives?: (objectives: { covered: number[]; total: number; essential: number }) => void
+  /** Fires once, when the interviewer ends the round. */
+  onComplete?: (outcome: RoundOutcome) => void
 }
 
 export function VoicePanel({
@@ -53,6 +73,8 @@ export function VoicePanel({
   clientRef,
   onTranscript,
   onObservations,
+  onObjectives,
+  onComplete,
 }: VoicePanelProps) {
   const ref = useRef<VoiceClient | null>(null)
   const getClient = () => (ref.current ??= new VoiceClient())
@@ -87,6 +109,14 @@ export function VoicePanel({
   useEffect(() => {
     if (snapshot.observations.length > 0) onObservations?.(snapshot.observations)
   }, [onObservations, snapshot.observations])
+
+  useEffect(() => {
+    if (snapshot.objectives) onObjectives?.(snapshot.objectives)
+  }, [onObjectives, snapshot.objectives])
+
+  useEffect(() => {
+    if (snapshot.outcome) onComplete?.(snapshot.outcome)
+  }, [onComplete, snapshot.outcome])
 
   // Push the code to the interviewer, debounced. It only needs to be roughly
   // current — a keystroke-accurate view would mean a message per character.
@@ -178,13 +208,15 @@ export function VoicePanel({
         {live && (
           <span className="flex items-center gap-1.5">
             <span
-              className={`size-1.5 rounded-full ${TURN_COLOR[snapshot.turn]} ${
-                snapshot.turn === 'speaking' || snapshot.turn === 'listening'
+              className={`size-2 rounded-full ${TURN_COLOR[snapshot.turn]} ${
+                snapshot.turn === 'speaking' || snapshot.turn === 'thinking'
                   ? 'animate-pulse'
                   : ''
               }`}
             />
-            <span className="text-[11px] text-ink-1">{TURN_LABEL[snapshot.turn]}</span>
+            <span className="text-[11px] font-medium text-ink-0">
+              {TURN_LABEL[snapshot.turn]}
+            </span>
           </span>
         )}
 
@@ -209,6 +241,87 @@ export function VoicePanel({
         <p className="shrink-0 border-b border-surface-3 bg-fail/10 px-3 py-2 text-[11.5px] leading-relaxed text-fail">
           {snapshot.error}
         </p>
+      )}
+
+      {live && snapshot.objectives && !snapshot.outcome && (
+        <div className="shrink-0 border-b border-surface-3 px-3 py-2">
+          <div className="mb-1.5 flex items-baseline gap-2">
+            <span className="text-[10px] uppercase tracking-wider text-ink-2">Objectives</span>
+            <span className="ml-auto text-[11px] tabular-nums text-ink-1">
+              {snapshot.objectives.covered.length} of {snapshot.objectives.total}
+            </span>
+          </div>
+          {/*
+            Pips, not labels. What each point *is* stays hidden until the round
+            ends — showing the list would hand over the answer to the question
+            being asked. Seeing the count move is the feedback that matters.
+          */}
+          <div className="flex gap-1">
+            {Array.from({ length: snapshot.objectives.total }, (_, i) => (
+              <span
+                key={i}
+                className={`h-1.5 flex-1 rounded-full transition-colors ${
+                  snapshot.objectives!.covered.includes(i + 1)
+                    ? i < snapshot.objectives!.essential
+                      ? 'bg-pass'
+                      : 'bg-accent'
+                    : 'bg-surface-3'
+                }`}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {snapshot.outcome && (
+        <div className="shrink-0 border-b border-surface-3 bg-surface-2 px-3 py-3">
+          <div className="mb-1.5 flex items-baseline gap-2">
+            <span className="text-[10px] uppercase tracking-wider text-accent">
+              Interview finished
+            </span>
+            <span
+              className={`ml-auto rounded border px-1.5 py-px text-[10px] uppercase tracking-wide ${
+                snapshot.outcome.verdict === 'strong' || snapshot.outcome.verdict === 'solid'
+                  ? 'border-pass/50 text-pass'
+                  : snapshot.outcome.verdict === 'mixed'
+                    ? 'border-warn/50 text-warn'
+                    : 'border-fail/50 text-fail'
+              }`}
+            >
+              {snapshot.outcome.verdict}
+            </span>
+          </div>
+          <p className="mb-2.5 text-[12.5px] leading-relaxed text-ink-0">
+            {snapshot.outcome.summary}
+          </p>
+          {/*
+            The route to the report, offered at the only moment it is obvious you
+            want one. Previously a finished interview just stopped, and the report
+            was reachable only by pressing "End & get report" on the session bar —
+            so a whole round could be talked through and never reported back.
+          */}
+          <a
+            href="/report"
+            className="mb-3 inline-block rounded bg-accent px-3 py-1.5 text-[12px] font-medium text-surface-0 transition-opacity hover:opacity-90"
+          >
+            See the full report
+          </a>
+          {/* Revealed only now. The round is over, so what you missed is feedback. */}
+          <ul className="flex flex-col gap-1">
+            {snapshot.outcome.points.map((point, i) => {
+              const hit = snapshot.outcome!.covered.includes(i + 1)
+              return (
+                <li key={i} className="flex gap-2 text-[12px] leading-relaxed">
+                  <span className={hit ? 'text-pass' : 'text-ink-2'}>{hit ? '✓' : '○'}</span>
+                  <span className={hit ? 'text-ink-1' : 'text-ink-2'}>
+                    {point.text}
+                    {!point.essential && <span className="text-ink-2"> (bonus)</span>}
+                  </span>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
       )}
 
       {live && (
@@ -236,8 +349,13 @@ export function VoicePanel({
             {snapshot.holding ? 'Listening — release when done' : 'Hold to talk'}
           </button>
           <p className="mt-1.5 text-center text-[10.5px] text-ink-2">
-            or hold <kbd className="rounded border border-surface-3 px-1">space</kbd> when
-            you&apos;re not in the editor
+            {snapshot.turn === 'idle' || snapshot.holding
+              ? TURN_HINT[snapshot.turn]
+              : TURN_HINT[snapshot.turn]}
+          </p>
+          <p className="mt-1 text-center text-[10px] text-ink-2/70">
+            or hold <kbd className="rounded border border-surface-3 px-1">space</kbd> outside
+            the editor
           </p>
         </div>
       )}

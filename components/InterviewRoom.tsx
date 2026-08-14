@@ -250,13 +250,13 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
    * progress tracking, because you stop noticing it is missing.
    */
   useEffect(() => {
-    const capture = () => checkpointRound()
+    const capture = () => checkpointRound(problem.slug)
     window.addEventListener('pagehide', capture)
     return () => {
       window.removeEventListener('pagehide', capture)
       capture()
     }
-  }, [])
+  }, [problem.slug])
 
   // Debounced well past a keystroke: this serialises the whole record, and only
   // the final state of the code matters to the report.

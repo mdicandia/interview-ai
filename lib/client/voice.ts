@@ -28,6 +28,13 @@ export interface Observation {
   at: number
 }
 
+export interface RoundOutcome {
+  verdict: 'strong' | 'solid' | 'mixed' | 'weak'
+  summary: string
+  covered: number[]
+  points: { text: string; essential: boolean }[]
+}
+
 export interface VoiceSnapshot {
   status: 'idle' | 'connecting' | 'live' | 'error'
   turn: TurnState
@@ -45,6 +52,15 @@ export interface VoiceSnapshot {
    * rest of the round, which is exactly what a practice run must not do.
    */
   observations: Observation[]
+  /**
+   * Expected points reached so far, by index, and how many there are.
+   *
+   * Indices only while the round runs: the text is the answer key, and putting
+   * it on screen mid-question would hand over what is being asked.
+   */
+  objectives: { covered: number[]; total: number; essential: number } | null
+  /** Set when the interviewer ends the round. Null while it is still running. */
+  outcome: RoundOutcome | null
   error: string | null
 }
 
@@ -56,6 +72,8 @@ const INITIAL: VoiceSnapshot = {
   holding: false,
   transcript: [],
   observations: [],
+  objectives: null,
+  outcome: null,
   error: null,
 }
 
@@ -90,7 +108,14 @@ export class VoiceClient {
     language: Language
   }): Promise<void> {
     if (this.#socket) return
-    this.#update({ status: 'connecting', error: null, transcript: [], observations: [] })
+    this.#update({
+      status: 'connecting',
+      error: null,
+      transcript: [],
+      observations: [],
+      objectives: null,
+      outcome: null,
+    })
 
     // Microphone first: if permission is refused there is no point opening a
     // socket, and the failure is much clearer this way round.
@@ -181,6 +206,27 @@ export class VoiceClient {
 
       case 'run-tests':
         this.#onRunTests?.()
+        break
+
+      case 'objective':
+        this.#update({
+          objectives: {
+            covered: message.covered,
+            total: message.total,
+            essential: message.essential,
+          },
+        })
+        break
+
+      case 'round-complete':
+        this.#update({
+          outcome: {
+            verdict: message.verdict,
+            summary: message.summary,
+            covered: message.covered,
+            points: message.points,
+          },
+        })
         break
 
       case 'observation': {

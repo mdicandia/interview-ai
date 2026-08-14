@@ -89,6 +89,15 @@ export interface RoundRecord {
    * something different if half of them were read rather than worked out.
    */
   solutionRevealed?: boolean
+  /**
+   * How a spoken round went, from the interviewer's own tally.
+   *
+   * A discussion round runs no tests, so without this there is nothing to
+   * derive an outcome from and every one of them was filed as "abandoned"
+   * regardless of how well it actually went.
+   */
+  objectives?: { covered: number; total: number; essential: number }
+  concluded?: { verdict: 'strong' | 'solid' | 'mixed' | 'weak'; summary: string }
   /** Editor contents as they stood last time anything was recorded. */
   files: { path: string; content: string }[]
 }
@@ -232,6 +241,24 @@ export function recordObservations(meta: RoundMeta, observations: ObservationRec
   })
 }
 
+export function recordObjectives(
+  meta: RoundMeta,
+  objectives: { covered: number; total: number; essential: number },
+): void {
+  mutate(meta, (round) => {
+    round.objectives = objectives
+  })
+}
+
+export function recordConcluded(
+  meta: RoundMeta,
+  concluded: { verdict: 'strong' | 'solid' | 'mixed' | 'weak'; summary: string },
+): void {
+  mutate(meta, (round) => {
+    round.concluded = concluded
+  })
+}
+
 export function recordSolutionRevealed(meta: RoundMeta): void {
   mutate(meta, (round) => {
     round.solutionRevealed = true
@@ -271,9 +298,9 @@ export function recordFiles(meta: RoundMeta, files: { path: string; content: str
  * silently stopped recording anything the moment the key was versioned — the
  * exact silent data loss this function exists to prevent.
  */
-export function checkpointRound(): void {
+export function checkpointRound(activeSlug?: string): void {
   const record = readRecord()
-  if (record) recordAttempts(record)
+  if (record) recordAttempts(record, activeSlug)
 }
 
 export function sealRecord(elapsedBySlug: Record<string, number>): SessionRecord | null {

@@ -126,6 +126,27 @@ export type ServerMessage =
    * session, which is the opposite of what a practice run is for. It goes
    * straight into the evidence record and surfaces only in the report.
    */
+  /**
+   * One of the round's expected points has been reached.
+   *
+   * Only the index and the totals cross the wire while the round is running.
+   * Sending the text would put the answer key on screen mid-question, which is
+   * the one thing a spoken round cannot afford.
+   */
+  | { type: 'objective'; covered: number[]; total: number; essential: number }
+  /**
+   * The interviewer has ended the round.
+   *
+   * The points are revealed here, and only here — the round is over, so seeing
+   * what you missed is the feedback rather than a leak.
+   */
+  | {
+      type: 'round-complete'
+      verdict: 'strong' | 'solid' | 'mixed' | 'weak'
+      summary: string
+      covered: number[]
+      points: { text: string; essential: boolean }[]
+    }
   | {
       type: 'observation'
       note: string

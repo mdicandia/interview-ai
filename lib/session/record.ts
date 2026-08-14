@@ -303,6 +303,23 @@ export function checkpointRound(activeSlug?: string): void {
   if (record) recordAttempts(record, activeSlug)
 }
 
+/**
+ * What was already said in this round, if it is worth picking up again.
+ *
+ * The voice server keeps nothing across a disconnect, so this is what a resumed
+ * session is rebuilt from. Two rounds are deliberately not resumable: one the
+ * interviewer already concluded, and one belonging to a sealed record — in both
+ * cases pressing Start means "again", not "carry on", and replaying the last
+ * conversation into a fresh attempt would poison it.
+ */
+export function resumableTranscript(slug: string): TranscriptLine[] {
+  const record = readRecord()
+  if (!record || record.endedAt !== null) return []
+  const round = record.rounds.find((r) => r.slug === slug)
+  if (!round || round.concluded) return []
+  return round.transcript ?? []
+}
+
 export function sealRecord(elapsedBySlug: Record<string, number>): SessionRecord | null {
   const record = readRecord()
   if (!record) return null

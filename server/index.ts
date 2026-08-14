@@ -130,8 +130,14 @@ server.on('connection', (socket: WebSocket) => {
             send,
             sendAudio,
           })
+          // Before `start()`, so the interviewer's opening turn already knows it
+          // is resuming and does not re-introduce itself.
+          if (message.resume?.length) session.rehydrate(message.resume)
           await session.start()
-          console.log(`[voice] session started: ${problem.slug} (${message.language})`)
+          console.log(
+            `[voice] session started: ${problem.slug} (${message.language})` +
+              (message.resume?.length ? ` — resumed with ${message.resume.length} lines` : ''),
+          )
         } catch (error) {
           session = null
           fail(error instanceof Error ? error.message : String(error))

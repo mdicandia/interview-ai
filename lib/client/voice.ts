@@ -106,12 +106,26 @@ export class VoiceClient {
     url: string
     problemSlug: string
     language: Language
+    /**
+     * What was already said, when this round is being picked up again.
+     *
+     * Seeded into the snapshot as well as sent to the server, and both halves
+     * matter. The panel shows the earlier conversation rather than an empty box,
+     * and — less obviously — the record keeps it: `recordTranscript` replaces the
+     * round's transcript wholesale from this list, so reconnecting with an empty
+     * one would erase the first half of the interview from the report.
+     */
+    resume?: { role: 'candidate' | 'interviewer'; text: string; at: number }[]
   }): Promise<void> {
     if (this.#socket) return
+    const resumed: TranscriptLine[] = (options.resume ?? []).map((line) => ({
+      ...line,
+      final: true,
+    }))
     this.#update({
       status: 'connecting',
       error: null,
-      transcript: [],
+      transcript: resumed,
       observations: [],
       objectives: null,
       outcome: null,
@@ -153,6 +167,7 @@ export class VoiceClient {
         type: 'start',
         problemSlug: options.problemSlug,
         language: options.language,
+        ...(options.resume?.length ? { resume: options.resume } : {}),
       })
     }
 

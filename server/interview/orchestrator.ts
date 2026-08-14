@@ -1,6 +1,7 @@
 import type { DiscussionProblem, Language, Problem } from '@/lib/problems/types'
 import type { LLMProvider, Message, ToolCall } from '../pipeline/llm'
 import { parseObservation, toolsFor, type Observation } from './tools'
+import { CoverageGrader } from './grader'
 import { loadBackchannels, type Backchannel } from './backchannel'
 import { SentenceSplitter } from '../pipeline/sentences'
 import { createSttClient, type SttClient } from '../pipeline/stt'
@@ -108,18 +109,76 @@ export class InterviewSession {
   readonly observations: Observation[] = []
 
   /**
-   * Expected points ticked off so far, by 1-based index. Discussion rounds only.
+   * Scores the expected points. Discussion rounds only; null everywhere else.
    *
-   * A Set because the model will sometimes tick the same point twice — it is
-   * told not to, but a duplicate must not make the progress bar exceed its own
-   * total.
+   * A second model call rather than a tool on the interviewer — see grader.ts for
+   * why. From here it is fire-and-forget: nothing in a turn waits on it, and a
+   * failed pass is logged and dropped.
    */
-  readonly covered = new Set<number>()
+  readonly grader: CoverageGrader | null = null
   #concluded = false
 
   constructor(config: SessionConfig) {
     this.#config = config
     this.#frozenPrefix = buildFrozenPrefix({ problem: config.problem, language: config.language })
+
+    if (config.problem.kind === 'discussion') {
+      const points = this.#expectedPoints()
+      this.grader = new CoverageGrader({
+        llm: config.llm,
+        points,
+        onChange: (covered) =>
+          config.send({
+            type: 'objective',
+            covered,
+            total: points.length,
+            essential: points.filter((p) => p.essential).length,
+          }),
+      })
+    }
+  }
+
+  /** Points reached so far, sorted. Empty on a coding round. */
+  get covered(): number[] {
+    return this.grader?.tally() ?? []
+  }
+
+  /**
+   * Reopens a round from the transcript of an earlier connection.
+   *
+   * The socket carries nothing across a disconnect: the conversation history, the
+   * coverage tally and the closing verdict all live in this process. The browser,
+   * meanwhile, has been writing every settled line to its evidence record all
+   * along — so the transcript is the one thing that *did* survive, and everything
+   * else here is rebuilt from it.
+   *
+   * Called before `start()`, so the interviewer's first turn already knows it is
+   * resuming rather than opening.
+   */
+  rehydrate(lines: { role: 'candidate' | 'interviewer'; text: string; at: number }[]): void {
+    const settled = lines.filter((line) => line.text.trim() !== '')
+    if (settled.length === 0) return
+
+    this.transcript.push(...settled)
+    this.#history.push(
+      {
+        role: 'user',
+        content:
+          '[This round is resuming after a break. Everything below was already said, by ' +
+          'you and by them. Do not introduce yourself again, do not re-ask the opening ' +
+          'question, and do not summarise what happened — carry on from where it stopped.]',
+      },
+      // Replayed as one block rather than as alternating turns. The API accepts
+      // either, and a single block cannot desynchronise: a transcript that starts
+      // or ends on the wrong speaker would otherwise produce two user messages in
+      // a row, which some providers reject outright.
+      { role: 'user', content: settled.map((l) => `${l.role === 'candidate' ? 'THEM' : 'YOU'}: ${l.text}`).join('\n') },
+      { role: 'assistant', content: 'Understood. Carrying on.' },
+    )
+
+    // Coverage is derived, so it needs no persistence of its own — the grader
+    // recomputes the whole tally from the transcript it has just been handed.
+    void this.grader?.gradeNow(this.transcript)
   }
 
   async start(): Promise<void> {
@@ -241,6 +300,7 @@ export class InterviewSession {
 
   async end(): Promise<void> {
     this.#clearIdleTimer()
+    this.grader?.stop()
     this.#abort?.abort()
     this.#stt?.close()
     this.#tts?.close()
@@ -289,6 +349,8 @@ export class InterviewSession {
       return
     }
     this.transcript.push({ role: 'candidate', text: said, at: Date.now() })
+    // Fire-and-forget, and debounced inside. The reply must not wait on it.
+    this.grader?.observe(this.transcript)
 
     /*
      * Only here, and deliberately not inside `#respond`.
@@ -406,7 +468,10 @@ export class InterviewSession {
       ...this.#history,
       {
         role: 'user',
-        content: buildVolatileNote(this.#volatile, this.#config.problem.kind === 'discussion'),
+        content: buildVolatileNote(
+          this.#volatile,
+          this.grader && { covered: this.grader.tally(), total: this.#expectedPoints().length },
+        ),
       },
     ]
 
@@ -484,11 +549,6 @@ export class InterviewSession {
           break
         }
 
-        case 'mark_covered': {
-          result = this.#markCovered(call.arguments)
-          break
-        }
-
         case 'conclude_round': {
           result = this.#concludeRound(call.arguments)
           break
@@ -514,34 +574,6 @@ export class InterviewSession {
     }))
   }
 
-  #markCovered(raw: string): string {
-    const points = this.#expectedPoints()
-    let index: unknown
-    try {
-      index = (JSON.parse(raw || '{}') as { index?: unknown }).index
-    } catch {
-      return 'That call could not be read. Carry on.'
-    }
-
-    const n = typeof index === 'number' ? index : Number(index)
-    // Out-of-range indices are dropped rather than clamped: a model that
-    // hallucinated a point number has not observed anything, and inventing a
-    // tick would overstate the candidate's coverage in the report.
-    if (!Number.isInteger(n) || n < 1 || n > points.length) {
-      return `There is no point ${String(index)}. The points are numbered 1 to ${points.length}.`
-    }
-    if (this.covered.has(n)) return 'Already ticked. Carry on.'
-
-    this.covered.add(n)
-    this.#config.send({
-      type: 'objective',
-      covered: [...this.covered],
-      total: points.length,
-      essential: points.filter((p) => p.essential).length,
-    })
-    return `Point ${n} ticked. ${points.length - this.covered.size} left. Say nothing about it.`
-  }
-
   #concludeRound(raw: string): string {
     if (this.#concluded) return 'This round has already been concluded.'
 
@@ -557,14 +589,31 @@ export class InterviewSession {
     const summary = typeof parsed.summary === 'string' ? parsed.summary.trim() : ''
 
     this.#concluded = true
+    void this.#reveal(verdict, summary)
+    return 'The round is closed and they have been shown how it went. Say your closing line and stop.'
+  }
+
+  /**
+   * Grades one last time, then shows the candidate how it went.
+   *
+   * The final pass matters more than it looks. Grading is debounced by seconds,
+   * and the last thing said in a round is very often the thing that closes the
+   * last gap — the interviewer asks the question that gets it, hears the answer,
+   * and concludes. Revealing the tally without regrading would show that point as
+   * missed, on the one screen the candidate reads carefully.
+   *
+   * The delay is free: the interviewer is speaking its closing line while this
+   * runs.
+   */
+  async #reveal(verdict: 'strong' | 'solid' | 'mixed' | 'weak', summary: string): Promise<void> {
+    await this.grader?.gradeNow(this.transcript)
     this.#config.send({
       type: 'round-complete',
       verdict,
       summary,
-      covered: [...this.covered],
+      covered: this.covered,
       points: this.#expectedPoints(),
     })
-    return 'The round is closed and they have been shown how it went. Say your closing line and stop.'
   }
 
   /* ------------------------------------------------------------------- idle */

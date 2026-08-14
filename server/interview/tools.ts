@@ -87,25 +87,15 @@ export const NOTE_OBSERVATION: ToolSpec = {
  */
 export const INTERVIEWER_TOOLS: ToolSpec[] = [NOTE_OBSERVATION, RUN_TESTS]
 
-export const MARK_COVERED: ToolSpec = {
-  name: 'mark_covered',
-  description:
-    'Tick off one of the numbered points from "WHAT A GOOD ANSWER REACHES" the moment the ' +
-    'candidate reaches it. Silent — never tell them a point was ticked, and never read the ' +
-    'point out. Call it as soon as they say the substance of it, however clumsily worded; ' +
-    'you are marking whether they know it, not whether they phrased it well. ' +
-    'Call it once per point. Do not tick a point they have not actually reached.',
-  parameters: {
-    type: 'object',
-    properties: {
-      index: {
-        type: 'number',
-        description: 'The number shown next to the point in the prompt, starting at 1.',
-      },
-    },
-    required: ['index'],
-  },
-}
+/*
+ * There is deliberately no `mark_covered` tool.
+ *
+ * It existed, and it was unreliable for a structural reason: tools compete with
+ * speaking for the model's attention, and each one added makes the others fire
+ * less. A spoken round had three. Coverage is now decided by a separate model
+ * call that re-reads the whole transcript — see grader.ts — which can also
+ * reconsider, where a fire-and-forget tick never could.
+ */
 
 export const CONCLUDE_ROUND: ToolSpec = {
   name: 'conclude_round',
@@ -142,9 +132,7 @@ export const CONCLUDE_ROUND: ToolSpec = {
  * worse than no tool at all.
  */
 export function toolsFor(kind: 'algorithm' | 'workspace' | 'discussion'): ToolSpec[] {
-  return kind === 'discussion'
-    ? [MARK_COVERED, CONCLUDE_ROUND, NOTE_OBSERVATION]
-    : INTERVIEWER_TOOLS
+  return kind === 'discussion' ? [CONCLUDE_ROUND, NOTE_OBSERVATION] : INTERVIEWER_TOOLS
 }
 
 export interface Observation {

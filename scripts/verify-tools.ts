@@ -23,9 +23,11 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { getProblem } from '../problems'
+import { getQuestion } from '../questions'
 import { loadBackchannels } from '../server/interview/backchannel'
 import { InterviewSession } from '../server/interview/orchestrator'
-import type { LLMProvider, StreamResult, ToolCall } from '../server/pipeline/llm'
+import { toolsFor } from '../server/interview/tools'
+import type { LLMProvider, Message, StreamResult, ToolCall } from '../server/pipeline/llm'
 import type { ServerMessage } from '../server/protocol'
 
 const GREEN = '\x1b[32m'
@@ -51,12 +53,19 @@ interface Pass {
 }
 
 /** Replays `passes` in order, one per `stream()` call, and counts the calls. */
-function stubLLM(passes: Pass[]): LLMProvider & { passesUsed: () => number } {
+function stubLLM(
+  passes: Pass[],
+  graded = '{"covered":[]}',
+): LLMProvider & { passesUsed: () => number; lastPrompt: () => Message[] } {
   let index = 0
+  let prompt: Message[] = []
   return {
     name: 'stub',
     passesUsed: () => index,
-    async stream(): Promise<StreamResult> {
+    /** What the interviewer was actually shown on the most recent turn. */
+    lastPrompt: () => prompt,
+    async stream(options): Promise<StreamResult> {
+      prompt = options.history
       // Past the end means the orchestrator asked for more generations than the
       // scenario allows — silence rather than a throw, so the bound is visible
       // as a count instead of an exception from somewhere unrelated.
@@ -71,16 +80,17 @@ function stubLLM(passes: Pass[]): LLMProvider & { passesUsed: () => number } {
         toolCalls: Promise.resolve(pass.calls ?? []),
       }
     },
+    // The grader's path. Never the streaming one.
     async complete() {
-      return ''
+      return graded
     },
   }
 }
 
-function session(llm: LLMProvider) {
+function session(llm: LLMProvider, slug = 'flaky-retry') {
   const sent: ServerMessage[] = []
-  const problem = getProblem('flaky-retry')
-  if (!problem) throw new Error('flaky-retry is missing')
+  const problem = getProblem(slug) ?? getQuestion(slug)
+  if (!problem) throw new Error(`${slug} is missing`)
 
   const instance = new InterviewSession({
     problem,
@@ -213,6 +223,48 @@ async function main() {
       'settles back to idle anyway',
       `ended on "${states[states.length - 1]?.turn}"`,
     )
+  }
+
+  console.log('\nA spoken round')
+  {
+    const names = toolsFor('discussion').map((tool) => tool.name)
+    // It was a tool and is now a separate model call — see grader.ts. Offering
+    // both would let the two disagree about the same tally.
+    check(!names.includes('mark_covered'), 'the interviewer cannot tick points itself', names.join(', '))
+    check(names.includes('conclude_round'), 'but it can still end the round')
+    check(!toolsFor('workspace').some((t) => t.name === 'conclude_round'), 'a coding round cannot')
+
+    const llm = stubLLM(
+      [{ text: 'And what does that cost you on the write side?' }],
+      '{"covered":[{"index":2,"quote":"go down in the tree"}]}',
+    )
+    const { instance, sent } = session(llm, 'concept-database-index')
+    instance.rehydrate([
+      { role: 'interviewer', text: 'What actually changes when you add an index?', at: 1 },
+      { role: 'candidate', text: 'You search by going down in the tree, not reading every row.', at: 2 },
+    ])
+    await sleep(60)
+
+    check(instance.transcript.length === 2, 'reopens with what was already said')
+    check(instance.covered.join(',') === '2', 'recomputes the tally from the transcript', `[${instance.covered}]`)
+    check(
+      sent.some((m) => m.type === 'objective' && m.covered.join(',') === '2'),
+      'and tells the browser, so the pips come back',
+    )
+
+    await turn(instance)
+    const prompt = llm.lastPrompt()
+    const asText = prompt.map((m) => m.content).join('\n')
+    check(asText.includes('resuming after a break'), 'tells the interviewer it is resuming')
+    check(asText.includes('going down in the tree'), 'and hands it what was said before')
+    // The interviewer no longer keeps its own tally, so this note is the only
+    // thing that stops it re-probing ground already covered.
+    const volatile = prompt[prompt.length - 1]?.content ?? ''
+    check(volatile.includes('Points reached so far: 2'), 'the volatile note carries the tally')
+    check(volatile.includes('Still open'), 'and says what is left to probe')
+    // Constraint 3: anything that changes per turn must stay out of the prefix.
+    check(!asText.startsWith('[Points'), 'and it goes after the history, not into the cached prefix')
+    await instance.end()
   }
 
   console.log('\nBackchannel clips')

@@ -139,6 +139,15 @@ export interface LLMProvider {
      * response parses, not that it has the right keys. Callers must validate.
      */
     json?: boolean
+    /**
+     * Use the live model rather than the report one.
+     *
+     * For off-latency-path work that still runs several times a session — the
+     * coverage grader — where the task is matching a transcript against a written
+     * list rather than forming a judgement. The report keeps the stronger model:
+     * it runs once, and it is the thing the candidate actually reads.
+     */
+    fast?: boolean
   }): Promise<string>
 }
 
@@ -334,9 +343,15 @@ export function createDeepSeekProvider(apiKey: string): LLMProvider {
       return { text: text(), usage, toolCalls }
     },
 
-    async complete({ messages, maxTokens = 4000, thinking = false, json: jsonMode = false }) {
+    async complete({
+      messages,
+      maxTokens = 4000,
+      thinking = false,
+      json: jsonMode = false,
+      fast = false,
+    }) {
       const response = await post({
-        model: REPORT_MODEL,
+        model: fast ? LIVE_MODEL : REPORT_MODEL,
         stream: false,
         max_tokens: maxTokens,
         ...(thinking ? {} : { thinking: { type: 'disabled' } }),

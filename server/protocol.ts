@@ -41,8 +41,22 @@ export const FRAME_MS = 20
 /* ------------------------------------------------------------ client → server */
 
 export type ClientMessage =
-  /** Open a session. Sent once, before any audio. */
-  | { type: 'start'; problemSlug: string; language: Language }
+  /**
+   * Open a session. Sent once, before any audio.
+   *
+   * `resume` carries what was already said, when the round is being picked up
+   * after a pause or a reload. Nothing on the voice server survives a
+   * disconnect — the conversation history, the coverage tally and the closing
+   * verdict all live in one process — but the browser has been writing every
+   * settled line to its evidence record throughout. So the transcript comes back
+   * up the wire and the rest is rebuilt from it.
+   */
+  | {
+      type: 'start'
+      problemSlug: string
+      language: Language
+      resume?: { role: 'candidate' | 'interviewer'; text: string; at: number }[]
+    }
   /**
    * Latest editor contents, debounced. The interviewer needs to see the code to
    * ask about it, but this is volatile and must never enter the cached prefix.

@@ -11,8 +11,10 @@ interviewer talking to you while you write code in a shared editor. Build plan a
 phase breakdown: `~/.claude/plans/can-we-develop-something-wobbly-lamport.md`.
 
 Status: **editor, execution, voice interviewer with tool use, hints, backchannel
-clips and the post-session report all work.** Still missing: an interviewer on
-discussion rounds, and socket reconnection.
+clips, spoken rounds with a coverage grader, and the post-session report all
+work.** Still missing: editor linting, and automatic socket reconnection — a
+dropped connection is recovered by pressing Start again, which resumes from the
+saved transcript rather than reconnecting on its own.
 
 ## Three execution paths
 
@@ -79,13 +81,27 @@ place reference solutions, reference patches and `expectedPoints` are ever read 
 they are what let the report judge code rather than describe it, and they still
 reach no served file. There is deliberately no `report` message on the socket.
 
+**7. Every tool added to the interviewer makes the others fire less.**
+They compete with speaking for the model's attention. Measured: with `run_tests`
+listed first it fired on 4 turns of 5 while `note_observation` fired on 0. So
+scoring a spoken round is *not* a tool — a second DeepSeek call reads the whole
+transcript and owns the tally (`server/interview/grader.ts`), off the latency
+path, and the interviewer is simply told the result in the volatile note. Two
+things follow. It can revise, where a fire-and-forget tick never could. And
+because coverage is *derived from the transcript* rather than accumulated in
+memory, resume is free: the browser sends back what was said, the server rebuilds
+`#history` and recomputes the tally, and nothing about a session needs persisting
+server-side. Anything you are tempted to add as a fourth tool should be weighed
+against this.
+
 ## Commands
 
 ```bash
 pnpm dev               # UI on :3000
 pnpm verify:problems   # reference solutions pass, starter code fails — both runtimes
 pnpm verify:report     # the report separates content from delivery, and cites real quotes
-pnpm verify:tools      # tool dispatch, against a stubbed model — no network, deterministic
+pnpm verify:tools      # tool dispatch, resume, the tally note — stubbed model, no network
+pnpm verify:grader     # coverage marks substance, not fluency: same answer, halting English
 pnpm verify:server     # a real spoken session: turn machine, tool use, barge-in
 pnpm typecheck
 pnpm lint
@@ -118,4 +134,4 @@ pnpm gen:backchannels  # re-synthesise the "mm-hm" clips — required after chan
   ~1.5s to ~490ms. They are the same speaker as the interviewer, so regenerate
   them whenever the voice changes.
 - `server/interview/` — the frozen-prefix prompt builder, the turn state machine,
-  the hint ladder, and `report.ts`.
+  the hint ladder, the coverage grader (see constraint 7), and `report.ts`.

@@ -163,16 +163,17 @@ function buildDiscussionPrefix(problem: DiscussionProblem): string {
   }
 
   /*
-   * Numbered, because `mark_covered` addresses them by number.
+   * Numbered, because the status note refers to them by number.
    *
    * Essential points come first so the numbering is stable and the model can see
    * at a glance how much of the required ground is left. The candidate never
-   * sees these numbers or this text.
+   * sees these numbers or this text. The same numbering is handed to the grader,
+   * which is the only thing that decides whether a point was reached.
    */
   parts.push(
     '',
     '--- WHAT A GOOD ANSWER REACHES (never read this out) ---',
-    'Call mark_covered with the number the moment they reach one, however clumsily worded.',
+    'You do not mark these off. A status note after each turn tells you which numbers they have reached.',
     'Do not name a point they have not reached; ask a question that gives them the chance.',
     '',
     'Essential — a competent answer covers all of these:',
@@ -268,7 +269,7 @@ export interface VolatileContext {
  * message: anything before the history would invalidate the cache on every
  * keystroke, which is precisely the mistake this whole design exists to avoid.
  */
-export function buildVolatileNote(context: VolatileContext, spoken = false): string {
+export function buildVolatileNote(context: VolatileContext, spoken?: SpokenProgress | null): string {
   /*
    * Told, not inferred.
    *
@@ -279,7 +280,12 @@ export function buildVolatileNote(context: VolatileContext, spoken = false): str
    * screen. The caller knows the round's kind; it should say so.
    */
   if (spoken) {
-    return '[No editor in this round — it is a spoken answer. Nothing to look at.]'
+    return [
+      '[No editor in this round — it is a spoken answer. Nothing to look at.]',
+      buildCoverageNote(spoken),
+    ]
+      .filter(Boolean)
+      .join('\n')
   }
 
   const lines: string[] = ['[Current state of their editor — context for you, not speech from them]']
@@ -303,6 +309,41 @@ export function buildVolatileNote(context: VolatileContext, spoken = false): str
   }
 
   return lines.join('\n')
+}
+
+/** Which numbered points a spoken round has reached, as of this turn. */
+export interface SpokenProgress {
+  covered: number[]
+  total: number
+}
+
+/**
+ * The running tally, told to the interviewer rather than remembered by it.
+ *
+ * The interviewer no longer ticks points itself — a separate grader does, off the
+ * latency path (see grader.ts). Without this note it would have no idea what
+ * ground was already covered, and would either re-probe answered points or wind
+ * up early. Volatile by nature, so it belongs here and never in the prefix.
+ *
+ * Numbers only. The interviewer already has the point *text* in its cached
+ * prefix; repeating it here would cost tokens on every turn to say nothing new.
+ */
+function buildCoverageNote(progress: SpokenProgress): string {
+  const { covered, total } = progress
+  if (total === 0) return ''
+
+  const open = Array.from({ length: total }, (_, i) => i + 1).filter((n) => !covered.includes(n))
+  if (covered.length === 0) {
+    return `[They have not yet reached any of the ${total} points. Do not tell them that.]`
+  }
+  if (open.length === 0) {
+    return '[They have reached every point. Move to the follow-ups, or close the round.]'
+  }
+  return (
+    `[Points reached so far: ${covered.join(', ')}. Still open: ${open.join(', ')}. ` +
+    'This is scored for you — do not tick anything, do not read the numbers out, and do ' +
+    'not tell them how many are left. Use it to choose what to ask next.]'
+  )
 }
 
 /** Status note when the candidate has gone quiet and stopped typing. */

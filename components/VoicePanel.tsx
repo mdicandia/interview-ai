@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { Language } from '@/lib/problems/types'
 import {
   VoiceClient,
@@ -10,6 +10,7 @@ import {
   type VoiceSnapshot,
 } from '@/lib/client/voice'
 import type { TurnState } from '@/server/protocol'
+import { resumableTranscript } from '@/lib/session/record'
 
 const VOICE_URL = process.env.NEXT_PUBLIC_VOICE_SERVER_URL ?? 'ws://localhost:8787'
 
@@ -149,6 +150,20 @@ export function VoicePanel({
    * go never released the microphone at all — the turn never ended and the
    * interviewer never answered.
    */
+  /*
+   * How many transcript lines came from an earlier connection.
+   *
+   * Read from the evidence record at the moment Start is pressed rather than
+   * held as state: a round can be left and re-entered, and the record is the
+   * only thing that knows what happened while this component was unmounted.
+   */
+  const [resumedLines, setResumedLines] = useState(0)
+  const start = useCallback(() => {
+    const resume = resumableTranscript(problemSlug)
+    setResumedLines(resume.length)
+    void client.connect({ url: VOICE_URL, problemSlug, language, resume })
+  }, [client, problemSlug, language])
+
   const holding = useRef(false)
   const talk = useCallback(
     (next: boolean) => {
@@ -226,7 +241,7 @@ export function VoicePanel({
             disabled={connecting}
             onClick={() => {
               if (live) void client.disconnect()
-              else void client.connect({ url: VOICE_URL, problemSlug, language })
+              else start()
             }}
             className={`rounded px-2.5 py-0.5 text-[11px] font-medium transition-opacity hover:opacity-90 disabled:opacity-50 ${
               live ? 'bg-surface-3 text-ink-0' : 'bg-accent text-surface-0'
@@ -373,6 +388,20 @@ export function VoicePanel({
           <ul className="flex flex-col gap-2.5">
             {snapshot.transcript.map((line, i) => (
               <li key={i}>
+                {/*
+                  The seam. Without it a resumed round opens with a wall of text
+                  you have no memory of having just said, and no way to tell what
+                  is from before the break.
+                */}
+                {live && resumedLines > 0 && i === resumedLines && (
+                  <div className="mb-2.5 flex items-center gap-2">
+                    <span className="h-px flex-1 bg-surface-3" />
+                    <span className="text-[10px] uppercase tracking-wide text-ink-2">
+                      Resumed
+                    </span>
+                    <span className="h-px flex-1 bg-surface-3" />
+                  </div>
+                )}
                 <div className="text-[10px] uppercase tracking-wide text-ink-2">
                   {line.role === 'interviewer' ? 'Interviewer' : 'You'}
                 </div>

@@ -160,19 +160,24 @@ export class InterviewSession {
     if (settled.length === 0) return
 
     this.transcript.push(...settled)
+    /*
+     * One user message, then one assistant message. Not alternating turns.
+     *
+     * Replaying the transcript as real turns would desynchronise: a transcript
+     * that starts or ends on the wrong speaker produces two user messages in a
+     * row, which a provider requiring strict alternation rejects outright. The
+     * note and the replay are a single message for exactly the same reason.
+     */
     this.#history.push(
       {
         role: 'user',
-        content:
+        content: [
           '[This round is resuming after a break. Everything below was already said, by ' +
-          'you and by them. Do not introduce yourself again, do not re-ask the opening ' +
-          'question, and do not summarise what happened — carry on from where it stopped.]',
+            'you and by them. Do not introduce yourself again, do not re-ask the opening ' +
+            'question, and do not summarise what happened — carry on from where it stopped.]',
+          ...settled.map((l) => `${l.role === 'candidate' ? 'THEM' : 'YOU'}: ${l.text}`),
+        ].join('\n'),
       },
-      // Replayed as one block rather than as alternating turns. The API accepts
-      // either, and a single block cannot desynchronise: a transcript that starts
-      // or ends on the wrong speaker would otherwise produce two user messages in
-      // a row, which some providers reject outright.
-      { role: 'user', content: settled.map((l) => `${l.role === 'candidate' ? 'THEM' : 'YOU'}: ${l.text}`).join('\n') },
       { role: 'assistant', content: 'Understood. Carrying on.' },
     )
 
@@ -607,6 +612,9 @@ export class InterviewSession {
    */
   async #reveal(verdict: 'strong' | 'solid' | 'mixed' | 'weak', summary: string): Promise<void> {
     await this.grader?.gradeNow(this.transcript)
+    // Frozen from here: the number the candidate is about to be shown is the
+    // number the history records, whatever else gets said afterwards.
+    this.grader?.close()
     this.#config.send({
       type: 'round-complete',
       verdict,

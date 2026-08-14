@@ -72,7 +72,7 @@ function grader(llm: LLMProvider, debounceMs = 20) {
 }
 
 /** Replays one canned JSON reply per `complete()` call, and counts the calls. */
-function stubLLM(replies: string[]): LLMProvider & { used: () => number } {
+function stubLLM(replies: string[], delayMs = 5): LLMProvider & { used: () => number } {
   let index = 0
   return {
     name: 'stub',
@@ -83,7 +83,7 @@ function stubLLM(replies: string[]): LLMProvider & { used: () => number } {
     async complete() {
       const reply = replies[index] ?? '{"covered":[]}'
       index += 1
-      await sleep(5)
+      await sleep(delayMs)
       return reply
     },
   }
@@ -182,6 +182,36 @@ async function machinery() {
     instance.stop()
   }
 
+  console.log('\nThe pass at the end of a round')
+  {
+    // The reveal is the one screen the candidate reads carefully, and the last
+    // answer is the one most likely to close the last gap. A pass already
+    // running was started before that answer existed, so joining it is not the
+    // same as grading the round.
+    const llm = stubLLM(
+      [`{"covered":[{"index":${STRUCTURE},"quote":"a"}]}`, `{"covered":[{"index":${WRITES},"quote":"b"}]}`],
+      80,
+    )
+    const { instance } = grader(llm, 10)
+    instance.observe([says('one')])
+    await sleep(35)
+    await instance.gradeNow([says('one'), says('two')])
+
+    check(llm.used() === 2, 'waits a running pass out rather than joining it', `${llm.used()} passes`)
+    check(
+      instance.tally().join(',') === `${STRUCTURE},${WRITES}`,
+      'so the last thing said is in the revealed tally',
+      `[${instance.tally()}]`,
+    )
+
+    // Whatever is said after the round closes must not move the number the
+    // candidate was just shown.
+    instance.close()
+    instance.observe([says('one'), says('two'), says('three')])
+    await sleep(120)
+    check(llm.used() === 2, 'and a closed round grades nothing further')
+  }
+
   console.log('\nA tally that only grows')
   {
     const llm = stubLLM([
@@ -253,12 +283,20 @@ function quoteIsReal(quote: string, transcript: TranscriptLine[]): boolean {
     .map((line) => normalise(line.text))
     .join(' ')
 
+  const whole = normalise(quote)
+  if (whole === '') return false
+
   // Split on ellipsis: a quote may legitimately elide the middle of a sentence.
-  return normalise(quote)
+  const parts = whole
     .split(/\.{3}|…/)
     .map((part) => part.trim())
     .filter((part) => part.length > 8)
-    .every((part) => said.includes(part))
+
+  // A quote too short to have any part worth matching is checked whole. Falling
+  // through to `.every` on an empty list would return true, which certified any
+  // one-word quote — including an invented one — as really said.
+  if (parts.length === 0) return said.includes(whole)
+  return parts.every((part) => said.includes(part))
 }
 
 async function judgement(llm: LLMProvider) {

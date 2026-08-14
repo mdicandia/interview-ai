@@ -89,6 +89,9 @@ export class CoverageGrader {
   #latest: TranscriptLine[] = []
   #running = false
   #dirty = false
+  #closed = false
+  /** The pass currently running, so `gradeNow` can wait for it to finish. */
+  #inFlight: Promise<void> = Promise.resolve()
 
   /**
    * How many candidate lines the last completed pass saw.
@@ -121,22 +124,50 @@ export class CoverageGrader {
    * flight, and skipped entirely when the candidate has said nothing new.
    */
   observe(transcript: TranscriptLine[]): void {
+    if (this.#closed) return
     this.#latest = transcript
     if (this.#timer) clearTimeout(this.#timer)
     this.#timer = setTimeout(() => void this.#run(), this.#config.debounceMs ?? DEBOUNCE_MS)
   }
 
-  /** Grade immediately and wait for it. Used on resume, and by the verifier. */
+  /**
+   * Grade immediately and wait for it. Used on resume, and when the round ends.
+   *
+   * A pass already in flight was started against an *older* transcript, so
+   * joining it is not the same as grading this one. Returning early on that
+   * basis is how the reveal at the end of a round came to show the candidate's
+   * last answer as missed: the pass it silently waited on had begun before that
+   * answer existed. So this waits the running pass out and then grades properly.
+   */
   async gradeNow(transcript: TranscriptLine[]): Promise<void> {
     this.#latest = transcript
     if (this.#timer) clearTimeout(this.#timer)
     this.#timer = null
+    while (this.#running) {
+      // We are about to re-run ourselves, so the queued re-run would be a second
+      // pass over the same transcript.
+      this.#dirty = false
+      await this.#inFlight
+    }
     await this.#run()
   }
 
   stop(): void {
     if (this.#timer) clearTimeout(this.#timer)
     this.#timer = null
+  }
+
+  /**
+   * Freezes the tally for good.
+   *
+   * Called once the round is concluded and the candidate has been shown which
+   * points they reached. Anything said after that — a parting remark, a question
+   * about the answer — must not move the number, or the history row and the
+   * revealed list end up disagreeing about the same round.
+   */
+  close(): void {
+    this.#closed = true
+    this.stop()
   }
 
   /** Sorted, so the browser's pips and the record read in point order. */
@@ -159,6 +190,12 @@ export class CoverageGrader {
     if (lines === 0 || lines === this.#gradedLines) return
 
     this.#running = true
+    // Held so `gradeNow` can wait this pass out rather than joining it.
+    this.#inFlight = this.#pass(transcript, lines)
+    await this.#inFlight
+  }
+
+  async #pass(transcript: TranscriptLine[], lines: number): Promise<void> {
     try {
       const graded = await this.#grade(transcript)
       this.#gradedLines = lines
@@ -170,7 +207,7 @@ export class CoverageGrader {
       console.error(`[grader] pass failed: ${error instanceof Error ? error.message : String(error)}`)
     } finally {
       this.#running = false
-      if (this.#dirty) {
+      if (this.#dirty && !this.#closed) {
         this.#dirty = false
         void this.#run()
       }

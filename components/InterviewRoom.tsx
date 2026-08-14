@@ -380,7 +380,10 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
   const showTabs = files.length > 1
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-surface-0">
+    <div
+      key={problem.slug}
+      className="animate-round-enter flex h-screen flex-col overflow-hidden bg-surface-0"
+    >
       <SessionBar />
 
       <header className="flex shrink-0 items-center gap-4 border-b border-surface-3 bg-surface-1 px-4 py-2.5">

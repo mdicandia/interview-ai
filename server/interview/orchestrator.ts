@@ -1,6 +1,6 @@
-import type { Language, Problem } from '@/lib/problems/types'
+import type { DiscussionProblem, Language, Problem } from '@/lib/problems/types'
 import type { LLMProvider, Message, ToolCall } from '../pipeline/llm'
-import { INTERVIEWER_TOOLS, parseObservation, type Observation } from './tools'
+import { parseObservation, toolsFor, type Observation } from './tools'
 import { loadBackchannels, type Backchannel } from './backchannel'
 import { SentenceSplitter } from '../pipeline/sentences'
 import { createSttClient, type SttClient } from '../pipeline/stt'
@@ -32,7 +32,7 @@ import {
  */
 
 export interface SessionConfig {
-  problem: Problem
+  problem: Problem | DiscussionProblem
   language: Language
   llm: LLMProvider
   deepgramKey: string
@@ -401,7 +401,7 @@ export class InterviewSession {
       frozenPrefix: this.#frozenPrefix,
       history: turn,
       signal: abort.signal,
-      tools: INTERVIEWER_TOOLS,
+      tools: toolsFor(this.#config.problem.kind),
       // A tool call is spent out of the same budget as the speech, and a
       // `note_observation` with a two-sentence note is most of a 120-token
       // ceiling on its own. That does not truncate visibly — the model simply

@@ -1,4 +1,4 @@
-import type { Language, Problem } from '@/lib/problems/types'
+import type { DiscussionProblem, Language, Problem } from '@/lib/problems/types'
 
 /**
  * Builds the interviewer's prompt, split into a cached half and a volatile half.
@@ -19,7 +19,7 @@ import type { Language, Problem } from '@/lib/problems/types'
  */
 
 export interface InterviewContext {
-  problem: Problem
+  problem: Problem | DiscussionProblem
   language: Language
 }
 
@@ -68,6 +68,8 @@ Using a tool is not a reason to say more. The rules on how you speak are unchang
  * never hear. Deterministic for a given problem and language.
  */
 export function buildFrozenPrefix({ problem, language }: InterviewContext): string {
+  if (problem.kind === 'discussion') return buildDiscussionPrefix(problem)
+
   const parts: string[] = [
     INTERVIEWER_RULES,
     '',
@@ -110,6 +112,98 @@ export function buildFrozenPrefix({ problem, language }: InterviewContext): stri
     `Delivery: ${problem.rubric.delivery.join(', ')}.`,
     '',
     'Assess content and delivery separately. A candidate whose code is correct but whose explanation is thin knows the material and is struggling to express it — that is a different finding from not knowing it, and you should probe to tell them apart rather than assuming.',
+  )
+
+  return parts.join('\n')
+}
+
+/**
+ * A spoken round, where there is no code and nothing runs.
+ *
+ * The whole shape is different from a coding round, so this is a separate prefix
+ * rather than a branch inside one. There is no editor to watch, no test to react
+ * to, and no hint ladder to walk down — the interviewer's only instrument is the
+ * question it asks next, so it needs the expected answer in front of it to know
+ * which direction to push.
+ *
+ * `expectedPoints` is the answer key and must never be read out. It is here so
+ * the interviewer can tell "hasn't said it yet" from "doesn't know it", which is
+ * the entire difference between a useful probe and a leading question.
+ */
+function buildDiscussionPrefix(problem: DiscussionProblem): string {
+  const essential = problem.expectedPoints.filter((p) => p.essential)
+  const bonus = problem.expectedPoints.filter((p) => !p.essential)
+
+  const parts: string[] = [
+    INTERVIEWER_RULES,
+    '',
+    'This round is a conversation. There is no editor, no code, and nothing to run.',
+    'You ask, they answer out loud, and you follow up. Do not offer to run anything.',
+    '',
+    '--- THE QUESTION ---',
+    '',
+    `Title: ${problem.title}`,
+    `Format: ${problem.format}. Expected length: about ${problem.expectedMinutes} minutes.`,
+    '',
+    problem.statement,
+    '',
+    'Ask it like this, near enough word for word, and then stop talking:',
+    problem.prompt,
+  ]
+
+  if (problem.context?.length) {
+    parts.push(
+      '',
+      '--- WHAT THEY ARE LOOKING AT ---',
+      'They have this on screen. Refer to it by line or by name; do not read it aloud.',
+    )
+    for (const file of problem.context) {
+      parts.push('', `--- ${file.path} ---`, file.content.trimEnd())
+    }
+  }
+
+  parts.push(
+    '',
+    '--- WHAT A GOOD ANSWER REACHES (never read this out) ---',
+    'Tick these off silently as they say them. Do not name one they have not reached;',
+    'ask a question that gives them the chance to get there themselves.',
+    '',
+    'Essential — a competent answer covers all of these:',
+    ...essential.map(
+      (p) => `- ${p.point}${p.weakAnswer ? ` (a weak answer says instead: ${p.weakAnswer})` : ''}`,
+    ),
+  )
+
+  if (bonus.length > 0) {
+    parts.push(
+      '',
+      'Good to reach, but not required. Never treat one of these as a failure:',
+      ...bonus.map((p) => `- ${p.point}`),
+    )
+  }
+
+  parts.push(
+    '',
+    '--- IF THEY STALL ---',
+    'Use these in order, and only after a real silence. They are prompts, not hints to read out.',
+    ...problem.hintLadder.map((probe, i) => `${i + 1}. ${probe}`),
+    '',
+    '--- ONCE THEY HAVE ANSWERED ---',
+    ...problem.followUps.map((question) => `- ${question}`),
+    '',
+    '--- HOW TO RUN THIS ROUND ---',
+    'Open by asking the question, then let them talk. Do not fill the first silence — it is thinking.',
+    'One question at a time. Two stacked questions get you an answer to neither.',
+    'When they finish a thread, either probe it or move to the next gap. Do not summarise what they just said back to them.',
+    'If they reach every essential point early, spend the remaining time on the follow-ups rather than winding up.',
+    'If they say something wrong, do not correct it. Ask the question whose answer exposes it, and let them find it.',
+    'If they ask you a question, answer briefly and hand it straight back.',
+    '',
+    '--- WHAT YOU ARE ASSESSING ---',
+    `Content: ${problem.rubric.content.join(', ')}.`,
+    `Delivery: ${problem.rubric.delivery.join(', ')}.`,
+    '',
+    'Assess content and delivery separately. Someone who reaches every point in halting English knows the material; that is a different finding from not knowing it, and the two need different advice.',
   )
 
   return parts.join('\n')
@@ -166,6 +260,12 @@ export interface VolatileContext {
  * keystroke, which is precisely the mistake this whole design exists to avoid.
  */
 export function buildVolatileNote(context: VolatileContext): string {
+  // A spoken round has no editor. Saying so beats an empty file listing, which
+  // the model reads as "they have written nothing" and asks about.
+  if (context.files.length === 0 && !context.tests) {
+    return '[No editor in this round — it is a spoken answer. Nothing to look at.]'
+  }
+
   const lines: string[] = ['[Current state of their editor — context for you, not speech from them]']
 
   for (const file of context.files) {

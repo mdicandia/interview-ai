@@ -106,17 +106,49 @@ export function TestPanel({ summary, streaming, running, bootMessage }: TestPane
   // show the finished summary, which also includes skipped/timed-out entries.
   const results = summary ? summary.results : streaming
 
+  const green =
+    summary !== null && !summary.compileError && summary.total > 0 && summary.passed === summary.total
+
+  /*
+   * Keyed on the run, so the celebration replays for each green run rather than
+   * firing once and never again. A CSS animation only restarts when the element
+   * is new, and the run id is the thing that actually changed.
+   */
+  const runKey = summary?.runId ?? 'none'
+
   return (
-    <section className="flex h-full min-h-0 flex-col border-t border-surface-3 bg-surface-1">
+    <section
+      className={`relative flex h-full min-h-0 flex-col overflow-hidden border-t bg-surface-1 ${
+        green ? 'border-pass/50' : 'border-surface-3'
+      }`}
+    >
+      {green && (
+        <div
+          key={runKey}
+          aria-hidden
+          className="pointer-events-none absolute inset-0 z-10 overflow-hidden"
+        >
+          <div className="animate-suite-sweep absolute inset-y-0 w-1/2 bg-gradient-to-r from-transparent via-pass/15 to-transparent" />
+        </div>
+      )}
+
       <header className="flex items-center gap-3 border-b border-surface-3 px-3 py-2">
         <h2 className="text-[11px] font-semibold uppercase tracking-wider text-ink-2">Tests</h2>
         {summary && !summary.compileError && (
           <span
-            className={`text-[11px] tabular-nums ${
-              summary.passed === summary.total ? 'text-pass' : 'text-ink-1'
+            key={runKey}
+            className={`rounded px-1.5 py-0.5 text-[11px] tabular-nums ${
+              green
+                ? 'animate-suite-pass animate-suite-ring bg-pass/15 font-semibold text-pass'
+                : 'text-ink-1'
             }`}
           >
             {summary.passed}/{summary.total} passing
+          </span>
+        )}
+        {green && (
+          <span key={`${runKey}-all`} className="animate-suite-pass text-[11px] text-pass">
+            all green
           </span>
         )}
         {running && <span className="text-[11px] text-ink-2">running…</span>}

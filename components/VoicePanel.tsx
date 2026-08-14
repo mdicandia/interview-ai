@@ -105,6 +105,8 @@ export function VoicePanel({
 
   const live = snapshot.status === 'live'
   const connecting = snapshot.status === 'connecting'
+  /** No files means no editor, which means this is a spoken round. */
+  const spoken = files.length === 0
 
   /*
    * Hold to talk, on the button or on the spacebar.
@@ -222,8 +224,10 @@ export function VoicePanel({
         {snapshot.transcript.length === 0 ? (
           <p className="text-[12px] leading-relaxed text-ink-2">
             {live
-              ? 'Hold the button and talk through the problem. The interviewer waits until you let go, so pauses are yours to take.'
-              : 'Press Start interview. The interviewer will hear you and can see your code as you write it.'}
+              ? 'Hold the button and talk. The interviewer waits until you let go, so pauses are yours to take.'
+              : spoken
+                ? 'Press Start interview. It will ask the question, then wait for your answer.'
+                : 'Press Start interview. The interviewer will hear you and can see your code as you write it.'}
           </p>
         ) : (
           <ul className="flex flex-col gap-2.5">

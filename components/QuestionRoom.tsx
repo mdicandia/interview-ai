@@ -1,36 +1,36 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { ClientQuestion } from '@/questions'
 import { DISCUSSION_FORMAT_LABELS } from '@/lib/problems/types'
+import type { Observation, TranscriptLine } from '@/lib/client/voice'
 import { useSession } from '@/lib/session/store'
-import { enterRound } from '@/lib/session/record'
+import { enterRound, recordObservations, recordTranscript } from '@/lib/session/record'
+import { checkpointRound } from '@/lib/session/history'
 import { Editor } from './Editor'
+import { VoicePanel } from './VoicePanel'
 import { SessionBar } from './SessionBar'
 
 /**
- * Displays a non-coding question. Read-only by design.
+ * A spoken round: the interviewer asks, you answer out loud, it follows up.
  *
- * There is no answer box and no rubric reveal: a verbal answer can't be graded
- * by anything that exists yet, and a self-marked checklist is a different
- * exercise from being questioned. This shows the prompt and any material to read,
- * you answer out loud, and the timer runs — which is enough for a session to
- * include the verbal rounds a real loop has.
+ * Still no answer box and no rubric reveal, and that stays deliberate. A
+ * self-marked checklist is a different exercise from being questioned — the
+ * value here is having to say it to someone who will push on the parts you
+ * skipped, which is the part that is hard about the real thing.
  *
- * The expected points and probes never reach the browser at all; they're stripped
- * server-side in `toClientQuestion`.
+ * The expected points and probes never reach the browser; `toClientQuestion`
+ * strips them, and the interviewer receives them server-side. That is what lets
+ * it tell "hasn't said it yet" from "doesn't know it" without ever putting the
+ * answer key somewhere the candidate could read it.
  */
 export function QuestionRoom({ question }: { question: ClientQuestion }) {
   const files = question.context ?? []
   const [activePath, setActivePath] = useState(files[0]?.path ?? '')
   const activeFile = files.find((f) => f.path === activePath) ?? files[0]
 
-  // Registered in the record even though nothing is captured here: there is no
-  // interviewer on this screen yet, so the round has no transcript and no code.
-  // Recording it anyway is what lets the report say "you were asked this and
-  // there is no evidence of your answer" instead of quietly omitting the round.
   const { session } = useSession()
   const stage = session?.stages.find((s) => s.slug === question.slug)
   const meta = useMemo(
@@ -49,8 +49,36 @@ export function QuestionRoom({ question }: { question: ClientQuestion }) {
     enterRound(meta)
   }, [meta])
 
+  // Same as a coding round: the attempt is written on the way out, so a spoken
+  // round counts even if the session is never formally ended.
+  useEffect(() => {
+    const capture = () => checkpointRound()
+    window.addEventListener('pagehide', capture)
+    return () => {
+      window.removeEventListener('pagehide', capture)
+      capture()
+    }
+  }, [])
+
+  const onTranscript = useCallback(
+    (lines: TranscriptLine[]) =>
+      recordTranscript(
+        meta,
+        lines.map(({ role, text, at }) => ({ role, text, at })),
+      ),
+    [meta],
+  )
+
+  const onObservations = useCallback(
+    (observations: Observation[]) => recordObservations(meta, observations),
+    [meta],
+  )
+
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-surface-0">
+    <div
+      key={question.slug}
+      className="animate-round-enter flex h-screen flex-col overflow-hidden bg-surface-0"
+    >
       <SessionBar />
 
       <header className="flex shrink-0 items-center gap-4 border-b border-surface-3 bg-surface-1 px-4 py-2.5">
@@ -104,9 +132,9 @@ export function QuestionRoom({ question }: { question: ClientQuestion }) {
           </div>
 
           <p className="mt-4 text-[12px] leading-relaxed text-ink-2">
-            No scoring yet — the interviewer that grades these hasn&apos;t been built. Answer
-            it aloud as you would in the real thing and use the timer to keep yourself
-            honest about length.
+            Press Start interview and answer out loud. It asks the question, then waits —
+            the silence after it is yours, not a prompt to fill. The report afterwards
+            scores what you covered separately from how you put it.
           </p>
         </section>
 
@@ -146,6 +174,23 @@ export function QuestionRoom({ question }: { question: ClientQuestion }) {
             </div>
           </section>
         )}
+        {/*
+          Always present, unlike the code panel. A question with nothing to read
+          is still a question to answer out loud, and this is the only way to do
+          that — so it gets its own column rather than sharing one with material
+          that may not exist.
+        */}
+        <section className="flex w-[340px] shrink-0 flex-col border-l border-surface-3">
+          <VoicePanel
+            problemSlug={question.slug}
+            language="typescript"
+            files={[]}
+            activePath=""
+            onRunTests={() => {}}
+            onTranscript={onTranscript}
+            onObservations={onObservations}
+          />
+        </section>
       </main>
     </div>
   )

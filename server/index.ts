@@ -1,5 +1,6 @@
 import { WebSocketServer, type WebSocket } from 'ws'
 import { getProblem } from '@/problems'
+import { getQuestion } from '@/questions'
 import { createDeepSeekProvider } from './pipeline/llm'
 import { selectedTtsProvider, warmVoice } from './pipeline/voice'
 import { InterviewSession } from './interview/orchestrator'
@@ -105,7 +106,10 @@ server.on('connection', (socket: WebSocket) => {
     switch (message.type) {
       case 'start': {
         if (session) return
-        const problem = getProblem(message.problemSlug)
+        // A slug is either a coding problem or a discussion question, and the
+        // session runs both. Which one it is changes the prompt and the tools;
+        // everything else about a turn is identical.
+        const problem = getProblem(message.problemSlug) ?? getQuestion(message.problemSlug)
         if (!problem) {
           fail(`Unknown problem: ${message.problemSlug}`)
           return

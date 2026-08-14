@@ -87,6 +87,18 @@ export const NOTE_OBSERVATION: ToolSpec = {
  */
 export const INTERVIEWER_TOOLS: ToolSpec[] = [NOTE_OBSERVATION, RUN_TESTS]
 
+/**
+ * The tools for one kind of round.
+ *
+ * A spoken round has no editor and nothing to execute, so offering `run_tests`
+ * there is not merely useless — a model handed a tool will look for a reason to
+ * use it, and "let's run the tests" in the middle of a system design question is
+ * worse than no tool at all.
+ */
+export function toolsFor(kind: 'algorithm' | 'workspace' | 'discussion'): ToolSpec[] {
+  return kind === 'discussion' ? [NOTE_OBSERVATION] : INTERVIEWER_TOOLS
+}
+
 export interface Observation {
   note: string
   axis: 'content' | 'delivery'

@@ -23,10 +23,10 @@ import {
   recordSolutionRevealed,
   recordRun,
   recordTranscript,
+  checkpointRound,
   type RoundMeta,
 } from '@/lib/session/record'
 import { clearDraft, readDraft, writeDraft } from '@/lib/session/drafts'
-import { checkpointRound } from '@/lib/session/history'
 import { Editor } from './Editor'
 import { SolutionPanel } from './SolutionPanel'
 import { SessionBar } from './SessionBar'
@@ -67,16 +67,37 @@ function initialDrafts(problem: ClientProblem): Drafts {
 }
 
 /**
+ * Files the candidate may actually change.
+ *
+ * Read-only files are the specification, and they must never be persisted or
+ * restored. Saving them meant that editing a problem's test file in the repo
+ * left the *old* copy on screen — the run still executed the authored version
+ * (`f.readOnly ? f.content : draft`), so the candidate would be reading one
+ * specification while a different one was asserted against.
+ */
+function editablePaths(problem: ClientProblem, language: Language): Set<string> {
+  return new Set(initialFiles(problem, language).filter((f) => !f.readOnly).map((f) => f.path))
+}
+
+/** Only the editable entries of a language's drafts, for persistence. */
+function editableOnly(files: Record<string, string>, allowed: Set<string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(files).filter(([path]) => allowed.has(path)))
+}
+
+/**
  * Starter code overlaid with anything saved from a previous visit.
  *
  * Merged per file rather than replaced wholesale, so a problem that gains a file
- * after you last worked on it still shows that file instead of vanishing it.
+ * after you last worked on it still shows that file instead of vanishing it, and
+ * filtered so a stale saved copy can never mask a read-only file.
  */
 function restoreDrafts(problem: ClientProblem): Drafts {
   const drafts = initialDrafts(problem)
   for (const language of supportedLanguages(problem)) {
     const saved = readDraft(problem.slug, language)
-    if (saved) drafts[language] = { ...drafts[language], ...saved }
+    if (saved) {
+      drafts[language] = { ...drafts[language], ...editableOnly(saved, editablePaths(problem, language)) }
+    }
   }
   return drafts
 }
@@ -246,15 +267,19 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
 
   // Continuous autosave, so a reload never costs the round. Cmd-S below only
   // makes it visible; it is not what makes it happen.
+  const persist = useCallback(() => {
+    writeDraft(problem.slug, language, editableOnly(drafts[language], editablePaths(problem, language)))
+  }, [problem, language, drafts])
+
   useEffect(() => {
-    const timer = setTimeout(() => writeDraft(problem.slug, language, drafts[language]), 800)
+    const timer = setTimeout(persist, 800)
     return () => clearTimeout(timer)
-  }, [problem.slug, language, drafts])
+  }, [persist])
 
   const save = useCallback(() => {
-    writeDraft(problem.slug, language, drafts[language])
+    persist()
     setSavedAt(Date.now())
-  }, [problem.slug, language, drafts])
+  }, [persist])
 
   const onTranscript = useCallback(
     (lines: TranscriptLine[]) =>

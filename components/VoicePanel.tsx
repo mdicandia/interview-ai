@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react'
 import type { Language } from '@/lib/problems/types'
 import {
   VoiceClient,
@@ -111,31 +111,51 @@ export function VoicePanel({
   /*
    * Hold to talk, on the button or on the spacebar.
    *
-   * The spacebar is bound only when the editor does not have focus, which is
-   * what makes it usable: you are typing most of the time, and a shortcut that
-   * inserts spaces into your code would be worse than no shortcut. `repeat` is
-   * ignored because holding a key fires keydown continuously.
+   * Every release goes through `talk`, which tracks whether we are actually
+   * holding. That bookkeeping is the whole point: the release path must not
+   * re-test any of the conditions the press path used, because they can change
+   * while the key is down. Guarding keyup on "is the editor focused" meant that
+   * pressing space outside the editor and then clicking into it before letting
+   * go never released the microphone at all — the turn never ended and the
+   * interviewer never answered.
    */
+  const holding = useRef(false)
+  const talk = useCallback(
+    (next: boolean) => {
+      if (holding.current === next) return
+      holding.current = next
+      client.setTalking(next)
+    },
+    [client],
+  )
+
   useEffect(() => {
     if (!live) return
 
+    // Only consulted when *starting*. Typing a space in the editor must not open
+    // the microphone; releasing it must always close one that is open.
     const typing = () => {
       const active = document.activeElement
-      return active instanceof HTMLElement && (active.isContentEditable || active.closest('.cm-editor') !== null)
+      return (
+        active instanceof HTMLElement &&
+        (active.isContentEditable || active.closest('.cm-editor') !== null)
+      )
     }
 
     const down = (event: KeyboardEvent) => {
       if (event.code !== 'Space' || event.repeat || typing()) return
       event.preventDefault()
-      client.setTalking(true)
+      talk(true)
     }
     const up = (event: KeyboardEvent) => {
-      if (event.code !== 'Space' || typing()) return
+      if (event.code !== 'Space' || !holding.current) return
       event.preventDefault()
-      client.setTalking(false)
+      talk(false)
     }
     // Releasing outside the window would otherwise leave the microphone open.
-    const blur = () => client.setTalking(false)
+    // Only when actually holding: an ordinary tab-away must not be read as the
+    // end of a turn, which would cut the interviewer off mid-sentence.
+    const blur = () => talk(false)
 
     window.addEventListener('keydown', down)
     window.addEventListener('keyup', up)
@@ -144,8 +164,10 @@ export function VoicePanel({
       window.removeEventListener('keydown', down)
       window.removeEventListener('keyup', up)
       window.removeEventListener('blur', blur)
+      // Unmounting mid-hold would strand the microphone open too.
+      talk(false)
     }
-  }, [client, live])
+  }, [live, talk])
 
   return (
     <section className="flex h-full min-h-0 flex-col border-l border-surface-3 bg-surface-1">
@@ -201,10 +223,10 @@ export function VoicePanel({
             type="button"
             onPointerDown={(event) => {
               event.currentTarget.setPointerCapture(event.pointerId)
-              client.setTalking(true)
+              talk(true)
             }}
-            onPointerUp={() => client.setTalking(false)}
-            onPointerCancel={() => client.setTalking(false)}
+            onPointerUp={() => talk(false)}
+            onPointerCancel={() => talk(false)}
             className={`w-full rounded-md border px-3 py-2 text-[12px] font-medium transition-colors ${
               snapshot.holding
                 ? 'border-pass bg-pass/15 text-pass'

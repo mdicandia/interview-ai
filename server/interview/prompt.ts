@@ -259,10 +259,17 @@ export interface VolatileContext {
  * message: anything before the history would invalidate the cache on every
  * keystroke, which is precisely the mistake this whole design exists to avoid.
  */
-export function buildVolatileNote(context: VolatileContext): string {
-  // A spoken round has no editor. Saying so beats an empty file listing, which
-  // the model reads as "they have written nothing" and asks about.
-  if (context.files.length === 0 && !context.tests) {
+export function buildVolatileNote(context: VolatileContext, spoken = false): string {
+  /*
+   * Told, not inferred.
+   *
+   * This used to decide from an empty file list, which is also what a *coding*
+   * round looks like before the browser's debounced first `code` message
+   * arrives. Speaking within the first moment of a bug squash therefore told the
+   * interviewer there was no editor, and it duly refused to discuss the code on
+   * screen. The caller knows the round's kind; it should say so.
+   */
+  if (spoken) {
     return '[No editor in this round — it is a spoken answer. Nothing to look at.]'
   }
 

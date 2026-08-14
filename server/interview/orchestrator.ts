@@ -394,7 +394,10 @@ export class InterviewSession {
   ): Promise<{ spoken: string; calls: ToolCall[] }> {
     const turn: Message[] = [
       ...this.#history,
-      { role: 'user', content: buildVolatileNote(this.#volatile) },
+      {
+        role: 'user',
+        content: buildVolatileNote(this.#volatile, this.#config.problem.kind === 'discussion'),
+      },
     ]
 
     const { text, toolCalls } = await this.#config.llm.stream({
@@ -483,6 +486,9 @@ export class InterviewSession {
 
   #armIdleTimer(): void {
     this.#clearIdleTimer()
+    // `#onIdle` returns immediately in this mode, so arming would schedule a
+    // no-op that re-arms itself for the life of the session.
+    if (this.#pushToTalk) return
     this.#idleTimer = setTimeout(() => void this.#onIdle(), IDLE_NUDGE_MS)
   }
 

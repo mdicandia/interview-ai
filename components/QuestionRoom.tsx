@@ -7,8 +7,12 @@ import type { ClientQuestion } from '@/questions'
 import { DISCUSSION_FORMAT_LABELS } from '@/lib/problems/types'
 import type { Observation, TranscriptLine } from '@/lib/client/voice'
 import { useSession } from '@/lib/session/store'
-import { enterRound, recordObservations, recordTranscript } from '@/lib/session/record'
-import { checkpointRound } from '@/lib/session/history'
+import {
+  checkpointRound,
+  enterRound,
+  recordObservations,
+  recordTranscript,
+} from '@/lib/session/record'
 import { Editor } from './Editor'
 import { VoicePanel } from './VoicePanel'
 import { SessionBar } from './SessionBar'
@@ -26,6 +30,16 @@ import { SessionBar } from './SessionBar'
  * it tell "hasn't said it yet" from "doesn't know it" without ever putting the
  * answer key somewhere the candidate could read it.
  */
+/**
+ * Hoisted so its identity is stable.
+ *
+ * Passed inline, a fresh `[]` on every render re-triggers VoicePanel's debounced
+ * `sendCode` effect, clearing and rescheduling the timer forever — during an
+ * active conversation the transcript re-renders often enough that it would never
+ * fire at all.
+ */
+const NO_FILES: { path: string; content: string }[] = []
+
 export function QuestionRoom({ question }: { question: ClientQuestion }) {
   const files = question.context ?? []
   const [activePath, setActivePath] = useState(files[0]?.path ?? '')
@@ -184,7 +198,7 @@ export function QuestionRoom({ question }: { question: ClientQuestion }) {
           <VoicePanel
             problemSlug={question.slug}
             language="typescript"
-            files={[]}
+            files={NO_FILES}
             activePath=""
             onRunTests={() => {}}
             onTranscript={onTranscript}

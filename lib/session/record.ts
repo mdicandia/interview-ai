@@ -263,6 +263,19 @@ export function recordFiles(meta: RoundMeta, files: { path: string; content: str
  * the one thing the record cannot reconstruct for itself, because pauses and
  * revisits are only tracked in the session store.
  */
+/**
+ * Writes the session's rounds to the permanent history without ending it.
+ *
+ * Lives here rather than in history.ts so it can go through `readRecord`. The
+ * previous version re-declared the storage key as a literal, which would have
+ * silently stopped recording anything the moment the key was versioned — the
+ * exact silent data loss this function exists to prevent.
+ */
+export function checkpointRound(): void {
+  const record = readRecord()
+  if (record) recordAttempts(record)
+}
+
 export function sealRecord(elapsedBySlug: Record<string, number>): SessionRecord | null {
   const record = readRecord()
   if (!record) return null

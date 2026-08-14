@@ -3,7 +3,6 @@
 import Link from 'next/link'
 import { useMemo } from 'react'
 import {
-  addAttempt,
   byProblem,
   useHistory,
   type Attempt,
@@ -190,27 +189,4 @@ export function HistoryView() {
       </main>
     </div>
   )
-}
-
-/**
- * Seeds one attempt that predates this page existing.
- *
- * Exported rather than run automatically. It is a one-off, and a module that
- * silently writes to history on import is the kind of thing that later turns
- * into a mysterious duplicate row.
- */
-export function seedFirstAttempt(): void {
-  addAttempt({
-    slug: 'autocomplete-build',
-    title: 'Build a search autocomplete',
-    source: 'problem',
-    language: 'typescript',
-    endedAt: Date.parse('2026-08-06T00:00:00Z'),
-    elapsedMs: 40 * 60_000,
-    outcome: 'not-solved',
-    hintsUsed: 4,
-    solutionRevealed: false,
-    spokeAloud: true,
-    note: 'First run of the tool. Entered by hand: the test counts were not captured, and several of the bugs hit during it were in the app rather than the problem.',
-  })
 }

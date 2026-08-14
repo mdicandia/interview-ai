@@ -99,15 +99,14 @@ function outcomeOf(round: RoundRecord): Outcome {
  */
 export function recordAttempts(record: SessionRecord): Attempt[] {
   const attempts = readHistory()
+  // Sealing stamps authoritative per-round timings; before that they are
+  // estimates, and an estimate must only ever be made once. See below.
+  const sealed = record.endedAt !== null
   let changed = false
 
   for (const round of record.rounds) {
     const id = `${record.id}:${round.slug}`
     const last = round.runs[round.runs.length - 1]
-
-    // Elapsed is stamped by sealing; before that, fall back to wall clock so a
-    // provisional row still carries a believable duration.
-    const elapsedMs = round.elapsedMs > 0 ? round.elapsedMs : Date.now() - round.enteredAt
 
     const row: Attempt = {
       id,
@@ -116,7 +115,9 @@ export function recordAttempts(record: SessionRecord): Attempt[] {
       source: round.source,
       language: round.language,
       endedAt: record.endedAt ?? Date.now(),
-      elapsedMs,
+      // Sealing fills `elapsedMs`; until then fall back to wall clock, which is
+      // correct only at the moment the round is left.
+      elapsedMs: round.elapsedMs > 0 ? round.elapsedMs : Date.now() - round.enteredAt,
       outcome: outcomeOf(round),
       ...(last ? { passed: last.passed, total: last.total } : {}),
       hintsUsed: round.hints.length,
@@ -128,34 +129,45 @@ export function recordAttempts(record: SessionRecord): Attempt[] {
     if (index === -1) {
       attempts.push(row)
       changed = true
-    } else {
-      // Scores arrive later, from the report, and must survive a re-checkpoint.
-      const { content, delivery, diagnosisKind } = attempts[index]
-      attempts[index] = { ...row, content, delivery, diagnosisKind }
-      changed = true
+      continue
     }
+
+    /*
+     * Timings are frozen at the first write; everything else is refreshed.
+     *
+     * A checkpoint walks *every* round in the record, not just the one being
+     * left, so leaving round three re-derives round one. Recomputing
+     * `Date.now() - enteredAt` there charges round one for the whole session:
+     * a ten-minute round recorded as forty-five, permanently, if the session is
+     * never sealed. `endedAt` had the same problem, collapsing every round of a
+     * session onto the same instant and destroying their order.
+     *
+     * The first write for a round happens as it is left, so the frozen value is
+     * the accurate one. Sealing is the exception — it carries real per-stage
+     * timings from the session clock, including pauses.
+     */
+    const previous = attempts[index]
+    const merged: Attempt = {
+      ...row,
+      endedAt: sealed ? row.endedAt : previous.endedAt,
+      elapsedMs: sealed ? row.elapsedMs : previous.elapsedMs,
+      // Scores arrive later, from the report, and must survive a re-checkpoint.
+      content: previous.content,
+      delivery: previous.delivery,
+      diagnosisKind: previous.diagnosisKind,
+    }
+
+    // Compared rather than assumed: a checkpoint that changes nothing should not
+    // write and broadcast, which would re-render every history listener.
+    if (JSON.stringify(merged) === JSON.stringify(previous)) continue
+    attempts[index] = merged
+    changed = true
   }
 
   if (!changed) return attempts
   const next = [...attempts].sort((a, b) => a.endedAt - b.endedAt)
   write(next)
   return next
-}
-
-/**
- * Captures the current round without ending the session.
- *
- * Called when leaving the interview room, so history reflects what you actually
- * did even if you never press "End & get report".
- */
-export function checkpointRound(): void {
-  const raw = typeof window === 'undefined' ? null : window.localStorage.getItem('interview-ai:record:v1')
-  if (!raw) return
-  try {
-    recordAttempts(JSON.parse(raw) as SessionRecord)
-  } catch {
-    // A malformed record is not worth taking a navigation down for.
-  }
 }
 
 /** Attaches report scores to the rows they belong to, once one is generated. */
@@ -178,7 +190,14 @@ export function attachScores(
   if (changed) write(attempts)
 }
 
-/** Adds a row by hand, for an attempt made before history existed. */
+/**
+ * Adds a row by hand, for an attempt made before history existed.
+ *
+ * Intentionally has no caller. It is the console escape hatch — safer than
+ * writing localStorage directly, because it dedupes on id and keeps the array
+ * sorted. A UI for it would be a permanent affordance for a one-off need, and
+ * a button that inserts an attempt you did not make is worse than no button.
+ */
 export function addAttempt(attempt: Omit<Attempt, 'id'> & { id?: string }): void {
   const attempts = readHistory()
   const id = attempt.id ?? `manual:${attempt.slug}:${attempt.endedAt}`

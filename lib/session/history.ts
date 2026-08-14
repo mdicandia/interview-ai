@@ -84,41 +84,78 @@ function outcomeOf(round: RoundRecord): Outcome {
 }
 
 /**
- * Appends one row per round of a sealed session.
+ * Writes one row per round of a session, updating rows it has already written.
  *
- * Idempotent by round: sealing the same session twice — which the report page
- * can do — must not double every row.
+ * **Upsert, not append**, and called on leaving a round as well as on ending the
+ * session. Waiting for the session to be sealed meant a round was only ever
+ * recorded if you finished the whole loop and pressed the right button — so
+ * closing the tab, or the dev server dying mid-session, threw the work away.
+ * Progress you lose by navigating is progress the tool did not actually keep.
+ *
+ * The row id is `session:slug`, so a later call for the same round overwrites
+ * with better numbers rather than duplicating. That does not break the rule that
+ * a *repeat attempt* is a new row: a repeat happens in a different session and
+ * therefore gets a different id.
  */
 export function recordAttempts(record: SessionRecord): Attempt[] {
-  const existing = readHistory()
-  const seen = new Set(existing.map((a) => a.id))
-  const added: Attempt[] = []
+  const attempts = readHistory()
+  let changed = false
 
   for (const round of record.rounds) {
     const id = `${record.id}:${round.slug}`
-    if (seen.has(id)) continue
-
     const last = round.runs[round.runs.length - 1]
-    added.push({
+
+    // Elapsed is stamped by sealing; before that, fall back to wall clock so a
+    // provisional row still carries a believable duration.
+    const elapsedMs = round.elapsedMs > 0 ? round.elapsedMs : Date.now() - round.enteredAt
+
+    const row: Attempt = {
       id,
       slug: round.slug,
       title: round.title,
       source: round.source,
       language: round.language,
       endedAt: record.endedAt ?? Date.now(),
-      elapsedMs: round.elapsedMs,
+      elapsedMs,
       outcome: outcomeOf(round),
       ...(last ? { passed: last.passed, total: last.total } : {}),
       hintsUsed: round.hints.length,
       solutionRevealed: round.solutionRevealed === true,
       spokeAloud: round.transcript.length > 0,
-    })
+    }
+
+    const index = attempts.findIndex((a) => a.id === id)
+    if (index === -1) {
+      attempts.push(row)
+      changed = true
+    } else {
+      // Scores arrive later, from the report, and must survive a re-checkpoint.
+      const { content, delivery, diagnosisKind } = attempts[index]
+      attempts[index] = { ...row, content, delivery, diagnosisKind }
+      changed = true
+    }
   }
 
-  if (added.length === 0) return existing
-  const next = [...existing, ...added].sort((a, b) => a.endedAt - b.endedAt)
+  if (!changed) return attempts
+  const next = [...attempts].sort((a, b) => a.endedAt - b.endedAt)
   write(next)
   return next
+}
+
+/**
+ * Captures the current round without ending the session.
+ *
+ * Called when leaving the interview room, so history reflects what you actually
+ * did even if you never press "End & get report".
+ */
+export function checkpointRound(): void {
+  const raw = typeof window === 'undefined' ? null : window.localStorage.getItem('interview-ai:record:v1')
+  if (!raw) return
+  try {
+    recordAttempts(JSON.parse(raw) as SessionRecord)
+  } catch {
+    // A malformed record is not worth taking a navigation down for.
+  }
 }
 
 /** Attaches report scores to the rows they belong to, once one is generated. */

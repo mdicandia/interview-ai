@@ -26,6 +26,7 @@ import {
   type RoundMeta,
 } from '@/lib/session/record'
 import { clearDraft, readDraft, writeDraft } from '@/lib/session/drafts'
+import { checkpointRound } from '@/lib/session/history'
 import { Editor } from './Editor'
 import { SolutionPanel } from './SolutionPanel'
 import { SessionBar } from './SessionBar'
@@ -217,6 +218,24 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
   useEffect(() => {
     enterRound(meta)
   }, [meta])
+
+  /*
+   * Writes the attempt to history on the way out, and on tab close.
+   *
+   * History used to be written only when a session was sealed, which meant a
+   * round counted only if you finished the whole loop and pressed the right
+   * button. Navigating away, closing the tab, or the dev server dying mid-round
+   * silently discarded it — and progress the tool quietly loses is worse than no
+   * progress tracking, because you stop noticing it is missing.
+   */
+  useEffect(() => {
+    const capture = () => checkpointRound()
+    window.addEventListener('pagehide', capture)
+    return () => {
+      window.removeEventListener('pagehide', capture)
+      capture()
+    }
+  }, [])
 
   // Debounced well past a keystroke: this serialises the whole record, and only
   // the final state of the code matters to the report.

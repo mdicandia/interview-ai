@@ -305,6 +305,64 @@ export function byProblem(attempts: Attempt[]): ProblemProgress[] {
     })
 }
 
+/**
+ * How the two axes have moved over the scored attempts.
+ *
+ * This is the question the whole two-axis rubric was built to answer, and until
+ * now nothing asked it: *is my English getting less in the way?* A per-attempt
+ * pair of scores cannot say. Three months of them can.
+ *
+ * Only scored attempts count — a round done in silence has no delivery score,
+ * and treating its absence as a zero would invent a decline. `delta` compares
+ * the mean of the most recent third against the mean of the first third, which
+ * is noisy at four attempts and meaningful by fifteen; `enough` says which.
+ */
+export interface AxisTrend {
+  points: { at: number; content: number; delivery: number | null }[]
+  contentDelta: number | null
+  deliveryDelta: number | null
+  /** True once there are enough scored attempts for the deltas to mean anything. */
+  enough: boolean
+  /** Mean gap, delivery minus content. Negative means expression is the lag. */
+  gap: number | null
+}
+
+const MIN_FOR_TREND = 6
+
+export function axisTrend(attempts: Attempt[]): AxisTrend {
+  const scored = attempts
+    .filter((a) => a.content !== undefined)
+    .sort((a, b) => a.endedAt - b.endedAt)
+    .map((a) => ({ at: a.endedAt, content: a.content!, delivery: a.delivery ?? null }))
+
+  const mean = (values: number[]) =>
+    values.length === 0 ? null : values.reduce((sum, n) => sum + n, 0) / values.length
+
+  // A third at each end, so the comparison is between periods rather than
+  // between two individual rounds — one bad morning should not read as a trend.
+  const window = Math.max(1, Math.floor(scored.length / 3))
+  const first = scored.slice(0, window)
+  const last = scored.slice(-window)
+
+  const delta = (pick: (p: (typeof scored)[number]) => number | null) => {
+    const before = mean(first.map(pick).filter((n): n is number => n !== null))
+    const after = mean(last.map(pick).filter((n): n is number => n !== null))
+    return before === null || after === null ? null : after - before
+  }
+
+  const gaps = scored
+    .filter((p) => p.delivery !== null)
+    .map((p) => p.delivery! - p.content)
+
+  return {
+    points: scored,
+    contentDelta: delta((p) => p.content),
+    deliveryDelta: delta((p) => p.delivery),
+    enough: scored.length >= MIN_FOR_TREND,
+    gap: mean(gaps),
+  }
+}
+
 export function useHistory(): { attempts: Attempt[]; loaded: boolean } {
   const [state, setState] = useState<{ attempts: Attempt[]; loaded: boolean }>({
     attempts: [],

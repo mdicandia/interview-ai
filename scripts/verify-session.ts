@@ -102,7 +102,7 @@ const line = (text: string) => ({ role: 'candidate' as const, text, at: now })
 async function main() {
   const { readRecord, beginRecord, enterRound, recordTranscript, sealRecord, hasEvidence, resumableTranscript, recordConcluded } =
     await import('../lib/session/record')
-  const { recordAttempts, readHistory, attachScores, byProblem, clearHistory } =
+  const { recordAttempts, readHistory, attachScores, byProblem, clearHistory, axisTrend } =
     await import('../lib/session/history')
   const { readDraft, writeDraft, clearDraft } = await import('../lib/session/drafts')
   const { formatDuration, stageElapsed } = await import('../lib/session/store')
@@ -223,6 +223,55 @@ async function main() {
     const [progress] = byProblem(readHistory())
     check(progress.timeDeltaMs === min(11) - min(18), 'and the delta compares latest against first', formatDuration(progress.timeDeltaMs ?? 0))
     check(progress.attempts[0].elapsedMs === min(18), 'oldest first')
+  }
+
+  console.log('\nKnowing it against saying it')
+  {
+    clearHistory()
+    const scored = (n: number, content: number, delivery: number | null) => ({
+      id: `t${n}`,
+      slug: 'x',
+      title: 'X',
+      source: 'problem' as const,
+      language: 'python' as const,
+      endedAt: T0 + n * min(60),
+      elapsedMs: min(20),
+      outcome: 'solved' as const,
+      hintsUsed: 0,
+      solutionRevealed: false,
+      spokeAloud: true,
+      content,
+      ...(delivery === null ? {} : { delivery }),
+    })
+
+    // Content flat at 4, delivery climbing 1 → 4. The exact shape this panel
+    // exists to show a non-native speaker: the material was never the problem.
+    const climbing = [
+      scored(1, 4, 1), scored(2, 4, 1), scored(3, 4, 2),
+      scored(4, 4, 3), scored(5, 4, 4), scored(6, 4, 4),
+    ]
+    const trend = axisTrend(climbing)
+    check(trend.enough, 'six scored rounds is enough to read a direction')
+    check(trend.contentDelta === 0, 'flat content reads as flat', String(trend.contentDelta))
+    check((trend.deliveryDelta ?? 0) > 0, 'rising delivery reads as rising', String(trend.deliveryDelta))
+    check(trend.gap !== null && trend.gap < 0, 'and the gap says expression is the lag', String(trend.gap?.toFixed(2)))
+
+    // An unscored round has no delivery. Counting its absence as a zero would
+    // invent a collapse out of a round done in silence.
+    const withSilent = axisTrend([...climbing, scored(7, 4, null)])
+    check(
+      withSilent.deliveryDelta !== null && withSilent.deliveryDelta > 0,
+      'a silent round does not drag the delivery trend down',
+      String(withSilent.deliveryDelta),
+    )
+    check(withSilent.points.length === 7, 'but it still appears on the line')
+
+    const thin = axisTrend([scored(1, 4, 2), scored(2, 5, 3)])
+    check(!thin.enough, 'two rounds is not a trend, and says so')
+
+    check(axisTrend([]).points.length === 0, 'no history is not an error')
+    // Rounds worked through in silence are never scored at all.
+    check(axisTrend([scored(1, 4, null)]).gap === null, 'and neither is a history with no delivery scores')
   }
 
   console.log('\nThe evidence record')

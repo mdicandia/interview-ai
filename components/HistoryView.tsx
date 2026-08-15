@@ -3,9 +3,11 @@
 import Link from 'next/link'
 import { useMemo } from 'react'
 import {
+  axisTrend,
   byProblem,
   useHistory,
   type Attempt,
+  type AxisTrend,
   type Outcome,
 } from '@/lib/session/history'
 import { formatDuration } from '@/lib/session/store'
@@ -59,6 +61,109 @@ function Pips({ score, label }: { score: number; label: string }) {
           />
         ))}
       </span>
+    </span>
+  )
+}
+
+/**
+ * The two axes over time, and the sentence they add up to.
+ *
+ * The whole reason content and delivery are scored apart is to tell "I don't
+ * know this" from "I know it and can't say it yet". A single round cannot answer
+ * that; a run of them can, and this is the only place that asks.
+ *
+ * Deliberately plain about uncertainty. Under six scored attempts it shows the
+ * shape and says the deltas do not mean anything yet, rather than reporting a
+ * trend from three points — a practice tool that flatters you is useless.
+ */
+function AxisTrendPanel({ trend }: { trend: AxisTrend }) {
+  const { points, contentDelta, deliveryDelta, enough, gap } = trend
+  if (points.length < 2) return null
+
+  const H = 34
+  const W = 240
+  const step = points.length > 1 ? W / (points.length - 1) : 0
+  // Scores are 1–5, so the axis is fixed rather than fitted. A fitted axis would
+  // turn a flat run of 4s into a dramatic-looking line.
+  const y = (score: number) => H - ((score - 1) / 4) * H
+  const path = (pick: (p: (typeof points)[number]) => number | null) => {
+    const drawn = points
+      .map((p, i) => ({ x: i * step, value: pick(p) }))
+      .filter((p): p is { x: number; value: number } => p.value !== null)
+    if (drawn.length < 2) return null
+    return drawn.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${y(p.value).toFixed(1)}`).join(' ')
+  }
+
+  const contentPath = path((p) => p.content)
+  const deliveryPath = path((p) => p.delivery)
+
+  const reading =
+    !enough || contentDelta === null
+      ? `Too few scored rounds to call a direction yet — ${points.length} so far, and it takes about six.`
+      : gap !== null && gap <= -0.75
+        ? 'Your delivery scores sit below your content scores: you know more than you are getting across.'
+        : gap !== null && gap >= 0.75
+          ? 'You put things across better than you know them — the gap to close is the material, not the English.'
+          : 'Content and delivery are moving together.'
+
+  return (
+    <section className="mb-3 rounded-lg border border-surface-3 bg-surface-1/40 px-4 py-3.5">
+      <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+        <h2 className="text-[13px] text-ink-0">Knowing it, and saying it</h2>
+        <span className="text-[11px] text-ink-2">{points.length} scored rounds</span>
+        {enough && (
+          <span className="ml-auto flex items-center gap-3 text-[11.5px]">
+            <span className="text-ink-2">
+              content <TrendDelta value={contentDelta} />
+            </span>
+            <span className="text-ink-2">
+              delivery <TrendDelta value={deliveryDelta} />
+            </span>
+          </span>
+        )}
+      </div>
+
+      <div className="flex items-center gap-4">
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          className="h-[34px] w-[240px] shrink-0 overflow-visible"
+          aria-hidden
+        >
+          {contentPath && (
+            <path d={contentPath} fill="none" stroke="var(--color-accent)" strokeWidth="1.5" />
+          )}
+          {deliveryPath && (
+            <path
+              d={deliveryPath}
+              fill="none"
+              stroke="var(--color-warn)"
+              strokeWidth="1.5"
+              strokeDasharray="3 2"
+            />
+          )}
+        </svg>
+        <div className="flex flex-col gap-1 text-[10.5px]">
+          <span className="flex items-center gap-1.5 text-ink-2">
+            <span className="h-px w-4 bg-accent" /> content
+          </span>
+          <span className="flex items-center gap-1.5 text-ink-2">
+            <span className="h-px w-4 border-t border-dashed border-warn" /> delivery
+          </span>
+        </div>
+      </div>
+
+      <p className="mt-3 max-w-[62ch] text-[12px] leading-relaxed text-ink-1">{reading}</p>
+    </section>
+  )
+}
+
+/** Here, unlike everywhere else on this page, *up* is the improvement. */
+function TrendDelta({ value }: { value: number | null }) {
+  if (value === null) return <span className="text-ink-2">—</span>
+  if (Math.abs(value) < 0.25) return <span className="text-ink-2">flat</span>
+  return (
+    <span className={value > 0 ? 'text-pass' : 'text-fail'}>
+      {value > 0 ? '↑' : '↓'} {Math.abs(value).toFixed(1)}
     </span>
   )
 }
@@ -137,6 +242,7 @@ function AttemptRow({ attempt, index }: { attempt: Attempt; index: number }) {
 export function HistoryView() {
   const { attempts, loaded } = useHistory()
   const groups = useMemo(() => byProblem(attempts), [attempts])
+  const trend = useMemo(() => axisTrend(attempts), [attempts])
 
   const totals = useMemo(() => {
     const solved = attempts.filter((a) => a.outcome === 'solved').length
@@ -190,6 +296,8 @@ export function HistoryView() {
             </Link>
           </div>
         )}
+
+        {loaded && groups.length > 0 && <AxisTrendPanel trend={trend} />}
 
         {loaded &&
           groups.map((group) => (

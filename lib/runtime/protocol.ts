@@ -42,7 +42,34 @@ export interface RunWorkspaceRequest {
   testPath: string
 }
 
-export type WorkerRequest = RunRequest | RunWorkspaceRequest
+/**
+ * Main thread → worker: is this even syntactically valid?
+ *
+ * Deliberately a separate request from a run, and deliberately answered by the
+ * same runtimes. A syntax error used to surface only when the tests ran, which
+ * inside a timed round is minutes of staring at code that cannot possibly work.
+ * Reusing the runtimes means the answer comes from the compiler that will
+ * actually execute it — esbuild for TypeScript, CPython for Python — rather than
+ * from a second parser that agrees with it only most of the time.
+ */
+export interface LintRequest {
+  type: 'lint'
+  runId: string
+  code: string
+  /** Only used to pick a loader; `.tsx` and `.py` parse differently. */
+  path: string
+}
+
+export type WorkerRequest = RunRequest | RunWorkspaceRequest | LintRequest
+
+/** One syntax error, positioned for the editor's gutter. */
+export interface Diagnostic {
+  /** 1-based, as every compiler reports it. */
+  line: number
+  /** 0-based within the line. */
+  column: number
+  message: string
+}
 
 /** Worker → main thread. */
 export type WorkerResponse =
@@ -75,6 +102,8 @@ export type WorkerResponse =
       durationMs: number
     }
   | { type: 'run-complete'; runId: string }
+  /** Answer to a `lint`. An empty list means it parses. */
+  | { type: 'lint-result'; runId: string; diagnostics: Diagnostic[] }
   /** Frontend problems: bundled JS for the iframe to host. See lib/runtime/frame.ts. */
   | { type: 'bundle'; runId: string; code: string }
   /** The runtime itself failed to start — not the candidate's fault. */

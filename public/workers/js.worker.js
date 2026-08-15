@@ -469,12 +469,48 @@ async function bundleForFrame({ runId, files, testPath }) {
   }
 }
 
+/**
+ * Syntax-only check for the editor gutter.
+ *
+ * `transform`, not `build`: it parses one file and resolves no imports, so an
+ * unfinished line reports as an unfinished line rather than as a missing module.
+ * That distinction is the whole point — while you are typing, every import is
+ * momentarily broken, and a linter that says so on every keystroke is noise.
+ *
+ * The loader is `tsx` regardless of the extension. A `.ts` file containing JSX
+ * is a mistake the run will catch; a lint that refuses to parse it would flag
+ * every line after the first tag, which teaches nothing.
+ */
+async function lint({ runId, code }) {
+  const build = await boot()
+  const diagnostics = []
+  try {
+    await build.transform(code, { loader: 'tsx', target: 'es2022' })
+  } catch (error) {
+    for (const problem of error?.errors ?? []) {
+      diagnostics.push({
+        line: problem.location?.line ?? 1,
+        column: problem.location?.column ?? 0,
+        message: problem.text ?? 'Syntax error',
+      })
+    }
+    // esbuild throws with no `errors` array only when it failed for its own
+    // reasons. Reporting that in the gutter would blame the candidate for it.
+    if (diagnostics.length === 0) {
+      self.postMessage({ type: 'lint-result', runId, diagnostics: [] })
+      return
+    }
+  }
+  self.postMessage({ type: 'lint-result', runId, diagnostics })
+}
+
 installConsoleCapture()
 
 const HANDLERS = {
   run,
   'run-workspace': runWorkspace,
   bundle: bundleForFrame,
+  lint,
 }
 
 self.onmessage = async (event) => {

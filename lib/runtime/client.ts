@@ -3,10 +3,20 @@ import { matches } from './compare'
 import {
   DEFAULT_TIMEOUT_MS,
   RUNTIME_BOOT_TIMEOUT_MS,
+  type Diagnostic,
   type RunSummary,
   type TestResult,
   type WorkerResponse,
 } from './protocol'
+
+/**
+ * How long to wait for a lint before giving up on it.
+ *
+ * Generous against a parse (milliseconds) and mean against anything else. A lint
+ * that has not answered in two seconds is behind a worker doing something else,
+ * and the answer would be about code that has since changed.
+ */
+const LINT_TIMEOUT_MS = 2_000
 
 /**
  * Owns the execution workers, compares their raw output against expectations, and
@@ -150,6 +160,47 @@ export class RuntimeClient {
     this.#runtimes.set(language, runtime)
     this.#setStatus(language, 'booting')
     return runtime
+  }
+
+  /**
+   * Syntax errors for the editor gutter, from the runtime that will run the code.
+   *
+   * Never throws and never rejects. A lint runs on a debounce while someone is
+   * typing, so every failure mode here — a runtime still booting, a worker that
+   * died, a request that outlives the answer — has to mean "no diagnostics yet"
+   * rather than an error in front of the candidate. The alternative is a red box
+   * appearing because Pyodide had not finished downloading.
+   *
+   * The timeout is short for the same reason: a stale answer about code from
+   * three keystrokes ago is worse than no answer, and the next keystroke will
+   * ask again anyway.
+   */
+  async lint(language: Language, code: string, path: string): Promise<Diagnostic[]> {
+    const runId = `lint-${++this.#runCounter}`
+    const runtime = this.#ensure(language)
+
+    try {
+      await runtime.ready
+    } catch {
+      return []
+    }
+
+    return new Promise<Diagnostic[]>((resolve) => {
+      const settle = (diagnostics: Diagnostic[]) => {
+        clearTimeout(timer)
+        runtime.worker.removeEventListener('message', onMessage)
+        resolve(diagnostics)
+      }
+      const timer = setTimeout(() => settle([]), LINT_TIMEOUT_MS)
+      const onMessage = (event: MessageEvent<WorkerResponse>) => {
+        const message = event.data
+        if ('runId' in message && message.runId !== runId) return
+        if (message.type === 'lint-result') settle(message.diagnostics)
+        else if (message.type === 'fatal') settle([])
+      }
+      runtime.worker.addEventListener('message', onMessage)
+      runtime.worker.postMessage({ type: 'lint', runId, code, path })
+    })
   }
 
   /** Kills a runtime so the next run gets a clean one. */

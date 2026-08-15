@@ -2,6 +2,7 @@
 
 import { javascript } from '@codemirror/lang-javascript'
 import { python } from '@codemirror/lang-python'
+import { linter, lintGutter, type Diagnostic as CmDiagnostic } from '@codemirror/lint'
 import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { oneDark } from '@codemirror/theme-one-dark'
@@ -27,6 +28,16 @@ interface EditorProps {
    * browser answers it with a "save this page" dialog over your editor.
    */
   onSave?: () => void
+  /**
+   * Syntax errors for the gutter, from whichever runtime will execute this code.
+   *
+   * Optional, and absent on read-only panes: a test file you cannot edit cannot
+   * acquire a syntax error, and marking one up would suggest the exercise is
+   * broken. Returning an empty list is how "nothing to report" and "could not
+   * check right now" are both expressed — the editor cannot tell them apart and
+   * should not try.
+   */
+  onLint?: (code: string) => Promise<{ line: number; column: number; message: string }[]>
 }
 
 /**
@@ -51,6 +62,7 @@ export function Editor({
   readOnly = false,
   onRun,
   onSave,
+  onLint,
 }: EditorProps) {
   const host = useRef<HTMLDivElement>(null)
   const view = useRef<EditorView | null>(null)
@@ -63,10 +75,12 @@ export function Editor({
   const onChangeRef = useRef(onChange)
   const onRunRef = useRef(onRun)
   const onSaveRef = useRef(onSave)
+  const onLintRef = useRef(onLint)
   useEffect(() => {
     onChangeRef.current = onChange
     onRunRef.current = onRun
     onSaveRef.current = onSave
+    onLintRef.current = onLint
   })
 
   useEffect(() => {
@@ -100,6 +114,42 @@ export function Editor({
             },
           },
         ]),
+        /*
+         * Long delay, on purpose.
+         *
+         * Half-typed code is syntactically invalid almost continuously, so a
+         * linter that keeps up with the keystrokes spends its life underlining
+         * the line you are in the middle of writing. Waiting until you stop
+         * means the marks appear when you might actually want them.
+         */
+        linter(
+          async (view): Promise<CmDiagnostic[]> => {
+            const check = onLintRef.current
+            if (!check) return []
+            const doc = view.state.doc
+            const found = await check(doc.toString())
+            return found.map((problem) => {
+              // A compiler counts lines from one and the document counts from
+              // zero, and a stale diagnostic can name a line the document no
+              // longer has — clamped rather than dropped, because the error is
+              // still real even when its position has drifted.
+              const lineNumber = Math.min(Math.max(problem.line, 1), doc.lines)
+              const line = doc.line(lineNumber)
+              const from = Math.min(line.from + Math.max(problem.column, 0), line.to)
+              return {
+                from,
+                to: line.to,
+                severity: 'error' as const,
+                message: problem.message,
+              }
+            })
+          },
+          { delay: 900 },
+        ),
+        // `basicSetup` wires the lint keymap but not the gutter, so without this
+        // the only sign of an error is a squiggle you have to already be looking
+        // at. The margin dot is visible from anywhere in the file.
+        lintGutter(),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) onChangeRef.current(update.state.doc.toString())
         }),

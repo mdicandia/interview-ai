@@ -272,11 +272,50 @@ async function runWorkspace({ runId, files, testPath }) {
   self.postMessage({ type: 'run-complete', runId })
 }
 
+/**
+ * Syntax-only check for the editor gutter, from CPython's own parser.
+ *
+ * `compile` rather than a Python linter: it is already here, it is the exact
+ * grammar the run will use, and it executes nothing — a `compile` of code that
+ * would delete your home directory still just returns a code object.
+ *
+ * Only the first error is ever reported, because that is all CPython gives:
+ * parsing stops at the first syntax error. Chasing a full list would mean
+ * shipping a second parser to disagree with the real one.
+ */
+async function lint({ runId, code }) {
+  const py = await boot()
+  py.globals.set('__lint_source', code)
+  const raw = py.runPython(`
+import json
+try:
+    compile(__lint_source, "<editor>", "exec")
+    __lint_out = "[]"
+except SyntaxError as exc:
+    __lint_out = json.dumps([{
+        "line": exc.lineno or 1,
+        # CPython's offset is 1-based and the editor's column is 0-based.
+        "column": max((exc.offset or 1) - 1, 0),
+        "message": exc.msg or "Syntax error",
+    }])
+except Exception:
+    # A compile that fails for anything other than syntax (a recursion limit on
+    # pathological nesting, say) is not something to blame the candidate for.
+    __lint_out = "[]"
+__lint_out
+`)
+  py.globals.delete('__lint_source')
+  self.postMessage({ type: 'lint-result', runId, diagnostics: JSON.parse(raw) })
+}
+
 self.onmessage = async (event) => {
   const request = event.data
-  if (request?.type !== 'run' && request?.type !== 'run-workspace') return
+  const kind = request?.type
+  if (kind !== 'run' && kind !== 'run-workspace' && kind !== 'lint') return
   try {
-    await (request.type === 'run' ? run(request) : runWorkspace(request))
+    if (kind === 'run') await run(request)
+    else if (kind === 'run-workspace') await runWorkspace(request)
+    else await lint(request)
   } catch (error) {
     self.postMessage({
       type: 'fatal',

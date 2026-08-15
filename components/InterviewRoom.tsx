@@ -170,6 +170,21 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
     return runtimeRef.current
   }, [])
 
+  /**
+   * Syntax errors for the open file, checked by the runtime that will run it.
+   *
+   * Read-only files are skipped: a test file the candidate cannot edit cannot
+   * acquire a syntax error, and marking one up would read as the exercise being
+   * broken rather than their code.
+   */
+  const lint = useCallback(
+    async (source: string) => {
+      if (activePath && files.find((f) => f.path === activePath)?.readOnly) return []
+      return getClient().lint(language, source, activePath || `solution.${language === 'python' ? 'py' : 'ts'}`)
+    },
+    [getClient, language, activePath, files],
+  )
+
   // The status listener is registered once, but needs to know which language is
   // on screen *now*. A ref gives it that without re-subscribing on every switch.
   const languageRef = useRef(language)
@@ -550,6 +565,7 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
               onChange={setCode}
               onRun={run}
               onSave={save}
+              onLint={lint}
             />
           </div>
           <div className="flex h-[42%] min-h-[180px] shrink-0 overflow-hidden">

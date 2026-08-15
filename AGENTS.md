@@ -98,15 +98,27 @@ against this.
 
 ```bash
 pnpm dev               # UI on :3000
-pnpm verify:problems   # reference solutions pass, starter code fails — both runtimes
-pnpm verify:report     # the report separates content from delivery, and cites real quotes
-pnpm verify:tools      # tool dispatch, resume, the tally note — stubbed model, no network
-pnpm verify:grader     # coverage marks substance, not fluency: same answer, halting English
-pnpm verify:server     # a real spoken session: turn machine, tool use, barge-in
-pnpm typecheck
-pnpm lint
+pnpm test              # everything free and deterministic, ~8s. Run this.
 pnpm copy-assets       # re-copy Pyodide/esbuild WASM into public/ (also runs postinstall)
 pnpm gen:backchannels  # re-synthesise the "mm-hm" clips — required after changing the voice
+```
+
+`pnpm test` chains `typecheck`, `lint`, and the four checks that need no API key:
+
+```bash
+pnpm verify:session    # storage: outcomes, what a checkpoint freezes, drafts, the clock
+pnpm verify:tools      # tool dispatch, resume, the tally note — stubbed model, no network
+pnpm verify:problems   # reference solutions pass, starter code fails — both runtimes
+pnpm verify:grader     # its machinery half; SKIP_LIVE=1 leaves out the model call
+```
+
+The rest cost money and are run deliberately, not on every change:
+
+```bash
+pnpm verify:grader     # without SKIP_LIVE: coverage marks substance, not fluency
+pnpm verify:report     # the report separates content from delivery, and cites real quotes
+pnpm verify:server     # a real spoken session: turn machine, tool use, barge-in
+pnpm verify:voice      # the raw pipeline against Deepgram, Cartesia and DeepSeek
 ```
 
 ## Layout
@@ -122,7 +134,10 @@ pnpm gen:backchannels  # re-synthesise the "mm-hm" clips — required after chan
 - `lib/runtime/` — worker protocol, comparison, and the supervising client.
 - `public/workers/` — the two execution workers. See constraint 1.
 - `lib/session/` — session templates and the timer (`store.ts`), plus the evidence
-  record the report is built from (`record.ts`). See constraint 6.
+  record the report is built from (`record.ts`). See constraint 6. Every rule
+  about *time* here — what a checkpoint freezes, what it refreshes — was written
+  in response to a specific wrong duration on the history page, so change it
+  against `verify:session` rather than by reasoning.
 - `server/pipeline/` — STT, the sentence splitter, the `LLMProvider`, and two
   text-to-speech implementations behind one interface (`voice.ts` picks). The
   default is local: Kokoro, an 82M Apache-2.0 model on the CPU, no key and no

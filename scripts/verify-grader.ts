@@ -372,11 +372,17 @@ async function judgement(llm: LLMProvider) {
 async function main() {
   await machinery()
 
-  const key = process.env.DEEPSEEK_API_KEY
+  /*
+   * The judgement half costs money and takes a few seconds, so `pnpm test` sets
+   * SKIP_LIVE and runs only the machinery above. That split is the point: the
+   * free half can run on every change, and the half that asks a real model
+   * whether it understood halting English is run deliberately.
+   */
+  const key = process.env.SKIP_LIVE ? undefined : process.env.DEEPSEEK_API_KEY
   if (!key) {
     console.log(
-      `\n${DIM}No DEEPSEEK_API_KEY — skipped the judgement half.` +
-        ` Run with: node --env-file=.env.local --import tsx scripts/verify-grader.ts${RESET}`,
+      `\n${DIM}Skipped the judgement half — ${process.env.SKIP_LIVE ? 'SKIP_LIVE is set' : 'no DEEPSEEK_API_KEY'}.` +
+        ` Run it with: pnpm verify:grader${RESET}`,
     )
   } else {
     await judgement(createDeepSeekProvider(key))

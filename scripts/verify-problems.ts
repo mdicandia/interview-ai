@@ -226,6 +226,38 @@ export function throws(fn, message) {
 }
 `
 
+/**
+ * Fails a test that never settles, instead of letting it end the whole run.
+ *
+ * A pending promise is not an error to Node: with nothing else outstanding the
+ * event loop simply empties and the process exits **zero**. That is what happened
+ * the first time an async problem was added here — one test awaited a promise
+ * that could never resolve, and `verify:problems` reported success having quietly
+ * skipped every problem after it. A green suite that ran a third of itself is
+ * worse than a red one.
+ *
+ * The timer also keeps the loop alive, so the silent exit cannot recur even if
+ * this races oddly.
+ */
+const TEST_TIMEOUT_MS = 10_000
+
+async function withTimeout(work: unknown): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      Promise.resolve(work),
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`timed out after ${TEST_TIMEOUT_MS}ms — a promise never settled`)),
+          TEST_TIMEOUT_MS,
+        )
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 async function runTsWorkspace(files: FileMap, testPath: string): Promise<Outcome[]> {
   const fileMap = new Map(Object.entries(files))
 
@@ -285,7 +317,7 @@ async function runTsWorkspace(files: FileMap, testPath: string): Promise<Outcome
   const outcomes: Outcome[] = []
   for (const name of names) {
     try {
-      await suite[name]()
+      await withTimeout(suite[name]())
       outcomes.push({ name, ok: true })
     } catch (error) {
       outcomes.push({

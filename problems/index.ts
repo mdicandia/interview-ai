@@ -1,8 +1,11 @@
 import type { AlgorithmProblem, Problem, WorkspaceProblem } from '@/lib/problems/types'
 import { longestSubstring } from './longest-substring'
 import { mergeIntervals } from './merge-intervals'
+import { regexMatch } from './regex-match'
 import { twoSum } from './two-sum'
 import { autocompleteBuild } from './autocomplete-build'
+import { cacheStampede } from './cache-stampede'
+import { embeddingSearch } from './embedding-search'
 import { flakyRetry } from './flaky-retry'
 import { idempotentCharge } from './idempotent-charge'
 import { nPlusOneQueries } from './n-plus-one-queries'
@@ -26,9 +29,12 @@ export const PROBLEMS: readonly Problem[] = [
   webhookLedger,
   rateLimiterWindow,
   orderPricing,
+  cacheStampede,
+  embeddingSearch,
   twoSum,
   longestSubstring,
   mergeIntervals,
+  regexMatch,
 ]
 
 const BY_SLUG = new Map(PROBLEMS.map((p) => [p.slug, p]))

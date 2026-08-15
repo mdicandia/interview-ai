@@ -70,6 +70,9 @@ const IDLE_NUDGE_MS = 45_000
 /** Never nudge twice in a row without the candidate having said something. */
 const MIN_MS_BETWEEN_NUDGES = 90_000
 
+/** How long the closing reveal will wait for one last grading pass. */
+const FINAL_GRADE_MS = 8_000
+
 export class InterviewSession {
   #config: SessionConfig
   #frozenPrefix: string
@@ -611,9 +614,31 @@ export class InterviewSession {
    * runs.
    */
   async #reveal(verdict: 'strong' | 'solid' | 'mixed' | 'weak', summary: string): Promise<void> {
-    await this.grader?.gradeNow(this.transcript)
+    /*
+     * Bounded, because the ending must not be conditional on a network call.
+     *
+     * A failed grading pass is already survivable — the grader swallows it — but
+     * a *hung* one is not: `complete()` is a bare fetch with no timeout, so a
+     * half-open connection would leave `round-complete` unsent, and with it the
+     * verdict, the point list and the only link to the report offered at the
+     * moment the candidate wants one. The round would simply stop with no
+     * ending. Better a tally a few seconds out of date than no ending at all.
+     */
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        this.grader?.gradeNow(this.transcript) ?? Promise.resolve(),
+        new Promise<void>((resolve) => {
+          timeout = setTimeout(resolve, FINAL_GRADE_MS)
+        }),
+      ])
+    } finally {
+      if (timeout) clearTimeout(timeout)
+    }
+
     // Frozen from here: the number the candidate is about to be shown is the
-    // number the history records, whatever else gets said afterwards.
+    // number the history records, whatever else gets said afterwards — including
+    // a pass that was still running when the race above timed out.
     this.grader?.close()
     this.#config.send({
       type: 'round-complete',

@@ -250,6 +250,10 @@ export class CoverageGrader {
    * inherit the mistake.
    */
   #apply(graded: Coverage[]): void {
+    // A pass that was still running when the round closed lands here. Its result
+    // is now history: the candidate has already been shown a number.
+    if (this.#closed) return
+
     let changed = false
     for (const { index, quote } of graded) {
       if (!this.covered.has(index)) {

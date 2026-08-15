@@ -72,15 +72,25 @@ function grader(llm: LLMProvider, debounceMs = 20) {
 }
 
 /** Replays one canned JSON reply per `complete()` call, and counts the calls. */
-function stubLLM(replies: string[], delayMs = 5): LLMProvider & { used: () => number } {
+function stubLLM(
+  replies: string[],
+  delayMs = 5,
+): LLMProvider & { used: () => number; started: () => Promise<void> } {
   let index = 0
+  let markStarted!: () => void
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve
+  })
   return {
     name: 'stub',
     used: () => index,
+    /** Resolves once a pass is genuinely in flight, so no test has to guess. */
+    started: () => started,
     async stream() {
       throw new Error('the grader must never use the streaming path')
     },
     async complete() {
+      markStarted()
       const reply = replies[index] ?? '{"covered":[]}'
       index += 1
       await sleep(delayMs)
@@ -194,7 +204,10 @@ async function machinery() {
     )
     const { instance } = grader(llm, 10)
     instance.observe([says('one')])
-    await sleep(35)
+    // Waited for, not slept past. Sleeping longer than the debounce assumes the
+    // event loop is not busy, and a stall would make this report a regression
+    // that is not there.
+    await llm.started()
     await instance.gradeNow([says('one'), says('two')])
 
     check(llm.used() === 2, 'waits a running pass out rather than joining it', `${llm.used()} passes`)
@@ -283,20 +296,21 @@ function quoteIsReal(quote: string, transcript: TranscriptLine[]): boolean {
     .map((line) => normalise(line.text))
     .join(' ')
 
-  const whole = normalise(quote)
-  if (whole === '') return false
-
-  // Split on ellipsis: a quote may legitimately elide the middle of a sentence.
-  const parts = whole
+  // Split on the ellipsis *before* normalising, not after: normalising strips
+  // full stops, so three dots would be gone by then and the two halves of an
+  // elided quote would be tested as one impossible contiguous string.
+  const fragments = quote
     .split(/\.{3}|…/)
-    .map((part) => part.trim())
-    .filter((part) => part.length > 8)
+    .map((part) => normalise(part))
+    .filter((part) => part !== '')
+  if (fragments.length === 0) return false
 
-  // A quote too short to have any part worth matching is checked whole. Falling
-  // through to `.every` on an empty list would return true, which certified any
-  // one-word quote — including an invented one — as really said.
-  if (parts.length === 0) return said.includes(whole)
-  return parts.every((part) => said.includes(part))
+  // Short fragments are ignored where there is anything longer to go on, since
+  // a stray "and" matches everything. Where there is not, they are all we have —
+  // and `.every` over an empty list returns true, which would certify any
+  // one-word quote, including an invented one, as really said.
+  const long = fragments.filter((part) => part.length > 8)
+  return (long.length > 0 ? long : fragments).every((part) => said.includes(part))
 }
 
 async function judgement(llm: LLMProvider) {

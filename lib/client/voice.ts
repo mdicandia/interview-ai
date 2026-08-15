@@ -77,11 +77,24 @@ const INITIAL: VoiceSnapshot = {
   error: null,
 }
 
+/** How many times to come back after a dropped connection before giving up. */
+const MAX_RECONNECT_ATTEMPTS = 5
+/** Doubling from here: 0.5s, 1s, 2s, 4s, 8s. */
+const RECONNECT_BASE_MS = 500
+
 export class VoiceClient {
   #socket: WebSocket | null = null
   #audio: AudioSession | null = null
   #snapshot: VoiceSnapshot = INITIAL
   #listeners = new Set<() => void>()
+
+  /** Kept so a reconnection can say hello again without the caller's help. */
+  #url = ''
+  #problemSlug = ''
+  #language: Language = 'typescript'
+  /** True once the candidate has ended it themselves; suppresses the retry. */
+  #closing = false
+  #attempts = 0
   /** Fires when the interviewer asks for the tests to be run. */
   #onRunTests: (() => void) | null = null
 
@@ -158,16 +171,30 @@ export class VoiceClient {
     audio.setMuted(true)
     this.#audio = audio
 
-    const socket = new WebSocket(options.url)
+    this.#url = options.url
+    this.#problemSlug = options.problemSlug
+    this.#language = options.language
+    this.#closing = false
+    this.#attempts = 0
+    this.#open(options.resume ?? [])
+  }
+
+  /**
+   * Opens the socket and says hello. Used for the first connection and for every
+   * reconnection, which is why it takes the transcript rather than reading it
+   * from the connect options: a reconnection resumes from everything said since.
+   */
+  #open(resume: { role: 'candidate' | 'interviewer'; text: string; at: number }[]): void {
+    const socket = new WebSocket(this.#url)
     socket.binaryType = 'arraybuffer'
     this.#socket = socket
 
     socket.onopen = () => {
       this.#send({
         type: 'start',
-        problemSlug: options.problemSlug,
-        language: options.language,
-        ...(options.resume?.length ? { resume: options.resume } : {}),
+        problemSlug: this.#problemSlug,
+        language: this.#language,
+        ...(resume.length > 0 ? { resume } : {}),
       })
     }
 
@@ -179,21 +206,75 @@ export class VoiceClient {
       this.#handle(JSON.parse(String(event.data)) as ServerMessage)
     }
 
-    socket.onerror = () =>
+    // Deliberately silent. An error is always followed by a close, and reporting
+    // both means the retry is announced and then immediately contradicted.
+    socket.onerror = () => {}
+
+    socket.onclose = () => {
+      this.#socket = null
+      if (this.#closing) {
+        this.#update({ status: 'idle', turn: 'idle' })
+        return
+      }
+      this.#reconnect()
+    }
+  }
+
+  /**
+   * Comes back after a dropped connection, and resumes rather than restarting.
+   *
+   * Without this a drop mid-answer looks exactly like the interviewer going
+   * quiet: the transcript stops, nothing errors, and you find out by noticing.
+   * The retry carries everything said so far, so the server rebuilds its history
+   * and the coverage grader recomputes the tally — resuming is already the
+   * supported path, this just takes it automatically.
+   *
+   * The audio session is left alone throughout. The microphone permission and
+   * the worklets survive a socket drop, and tearing them down would turn a
+   * one-second blip into a second permission prompt.
+   */
+  #reconnect(): void {
+    if (this.#attempts >= MAX_RECONNECT_ATTEMPTS) {
       this.#update({
         status: 'error',
         error: 'Lost the connection to the voice server. Is `pnpm dev:voice` running?',
       })
-
-    socket.onclose = () => {
-      if (this.#snapshot.status !== 'error') this.#update({ status: 'idle', turn: 'idle' })
+      return
     }
+
+    // Backing off rather than hammering: the overwhelmingly likely cause is the
+    // voice server restarting, and it needs a moment to come back.
+    const delay = RECONNECT_BASE_MS * 2 ** this.#attempts
+    this.#attempts += 1
+    this.#update({
+      status: 'connecting',
+      turn: 'idle',
+      speaking: false,
+      holding: false,
+      error: `Connection dropped — reconnecting (${this.#attempts} of ${MAX_RECONNECT_ATTEMPTS})…`,
+    })
+
+    setTimeout(() => {
+      if (this.#closing) return
+      // Everything said so far, including from before the drop. Interim lines
+      // are excluded: a guess that was never confirmed is not part of the
+      // record, and replaying one would put words in the candidate's mouth.
+      this.#open(
+        this.#snapshot.transcript
+          .filter((line) => line.final)
+          .map(({ role, text, at }) => ({ role, text, at })),
+      )
+    }, delay)
   }
 
   #handle(message: ServerMessage): void {
     switch (message.type) {
       case 'ready':
-        this.#update({ status: 'live' })
+        // Clears the retry budget as well as the message: a session that drops
+        // once an hour for eight hours should reconnect every time, not five
+        // times and then give up for good.
+        this.#attempts = 0
+        this.#update({ status: 'live', error: null })
         break
 
       case 'state':
@@ -291,6 +372,10 @@ export class VoiceClient {
    * another tab reaches the transcript.
    */
   setTalking(holding: boolean): void {
+    // A held key must not reopen a microphone the session closed. Pressing to
+    // talk during a paused session is a mistake, not an instruction, and the
+    // release path still runs so nothing is left latched.
+    if (holding && this.#snapshot.muted) return
     this.#audio?.setMuted(!holding)
     this.#update({ holding })
     this.#send({ type: 'talk', holding })
@@ -302,13 +387,28 @@ export class VoiceClient {
   }
 
   toggleMute(): void {
-    const muted = !this.#snapshot.muted
+    this.setMuted(!this.#snapshot.muted)
+  }
+
+  /**
+   * Force the microphone open or closed, regardless of the talk key.
+   *
+   * Used by the session pause, where the decision is not the candidate's moment
+   * to moment one — which is why `setTalking` refuses to open the microphone
+   * while this holds. Without that, holding the talk key would quietly undo the
+   * pause.
+   */
+  setMuted(muted: boolean): void {
+    if (this.#snapshot.muted === muted) return
     this.#audio?.setMuted(muted)
     this.#send({ type: 'mic', enabled: !muted })
     this.#update({ muted })
   }
 
   async disconnect(): Promise<void> {
+    // Set before the close, or the socket's own close handler reads this as a
+    // drop and starts reconnecting to a session the candidate just ended.
+    this.#closing = true
     this.#send({ type: 'end' })
     this.#socket?.close()
     this.#socket = null

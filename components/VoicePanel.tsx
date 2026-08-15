@@ -11,6 +11,7 @@ import {
 } from '@/lib/client/voice'
 import type { TurnState } from '@/server/protocol'
 import { resumableTranscript } from '@/lib/session/record'
+import { useSession } from '@/lib/session/store'
 
 const VOICE_URL = process.env.NEXT_PUBLIC_VOICE_SERVER_URL ?? 'ws://localhost:8787'
 
@@ -136,6 +137,28 @@ export function VoicePanel({
 
   const live = snapshot.status === 'live'
   const connecting = snapshot.status === 'connecting'
+
+  /*
+   * A paused session closes the microphone.
+   *
+   * Pause used to stop only the clock, which is the half nobody is billed for.
+   * Deepgram charges for the socket being open rather than for anyone talking,
+   * so a session paused over lunch cost exactly as much as one being worked
+   * through — and the interviewer could still hear the room, which is worse than
+   * the money.
+   *
+   * The connection stays up, deliberately. Tearing it down would drop the
+   * conversation history, and resuming would then mean replaying the transcript
+   * and paying for a fresh model turn to get back to where it already was.
+   */
+  const { session } = useSession()
+  const paused = session !== null && session.runningSince === null
+  useEffect(() => {
+    if (!live || !paused) return
+    client.setTalking(false)
+    client.setMuted(true)
+    return () => client.setMuted(false)
+  }, [client, live, paused])
   /** No files means no editor, which means this is a spoken round. */
   const spoken = files.length === 0
 
@@ -349,19 +372,26 @@ export function VoicePanel({
           */}
           <button
             type="button"
+            disabled={paused}
             onPointerDown={(event) => {
               event.currentTarget.setPointerCapture(event.pointerId)
               talk(true)
             }}
             onPointerUp={() => talk(false)}
             onPointerCancel={() => talk(false)}
-            className={`w-full rounded-md border px-3 py-2 text-[12px] font-medium transition-colors ${
+            className={`w-full rounded-md border px-3 py-2 text-[12px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
               snapshot.holding
                 ? 'border-pass bg-pass/15 text-pass'
                 : 'border-surface-3 text-ink-1 hover:border-accent-dim hover:text-ink-0'
             }`}
           >
-            {snapshot.holding ? 'Listening — release when done' : 'Hold to talk'}
+            {/* Named, not just greyed out: a dead button with no reason given
+                reads as the tool being broken. */}
+            {paused
+              ? 'Paused — the microphone is closed'
+              : snapshot.holding
+                ? 'Listening — release when done'
+                : 'Hold to talk'}
           </button>
           <p className="mt-1.5 text-center text-[10.5px] text-ink-2">
             {snapshot.turn === 'idle' || snapshot.holding

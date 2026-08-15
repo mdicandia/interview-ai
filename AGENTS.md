@@ -112,6 +112,12 @@ pnpm verify:problems   # reference solutions pass, starter code fails — both r
 pnpm verify:grader     # its machinery half; SKIP_LIVE=1 leaves out the model call
 ```
 
+One more is free but needs a build first, so it is not in `pnpm test`:
+
+```bash
+pnpm build && pnpm verify:bundle   # no answer key reaches anything the browser downloads
+```
+
 The rest cost money and are run deliberately, not on every change:
 
 ```bash
@@ -125,7 +131,10 @@ pnpm verify:voice      # the raw pipeline against Deepgram, Cartesia and DeepSee
 
 - `problems/*.ts` — problem definitions as typed modules (not JSON: statements and
   starter code are multi-line, and escaping that by hand is a bug farm).
-  `referenceSolution` is stripped in `toClientProblem` and never reaches the browser.
+  `referenceSolution` and `hintLadder` are stripped in `toClientProblem` and never
+  reach the browser. `pnpm verify:bundle` is what keeps that true — it greps the
+  built output, including the prerendered HTML and RSC payloads, which is where
+  the hint ladder was found shipping in full.
 - `questions/*.ts` — the non-coding question bank (`kind: 'discussion'`).
   **Deliberately not in `PROBLEMS` and not in the picker.** A verbal answer has no
   test suite, so nothing can grade one until the interviewer exists; wiring them

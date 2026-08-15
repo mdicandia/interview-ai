@@ -565,6 +565,126 @@ async function main() {
   send({ type: 'end' })
   await sleep(400)
   socket.close()
+
+  /* ------------------------------------------------------ a spoken round, twice
+   *
+   * Everything above is a coding round. A spoken round takes a different path
+   * end to end — a different prompt, a different tool list, and a coverage
+   * grader that no coding round ever starts — and none of it had been driven
+   * over a real socket.
+   *
+   * The round is then *resumed* on a second connection, which is the part that
+   * most needed this. Resume is covered by `verify:tools` against a stub, so the
+   * one thing never tested was the shape of the rebuilt history reaching the
+   * real API. A provider that rejected it would fail on the first turn of every
+   * resumed round, and nothing would have caught that before a live session.
+   */
+  console.log('\nA spoken round, and resuming it')
+  {
+    /** Opens a socket and collects everything worth asserting on. */
+    const openRound = (resume?: { role: 'candidate' | 'interviewer'; text: string; at: number }[]) => {
+      const ws = new WebSocket(`ws://localhost:${PORT}`)
+      const seen = {
+        ready: false,
+        errors: [] as string[],
+        interviewer: [] as string[],
+        candidate: [] as string[],
+        objectives: null as { covered: number[]; total: number } | null,
+      }
+      ws.on('message', (data: Buffer, isBinary: boolean) => {
+        if (isBinary) return
+        const message = JSON.parse(data.toString()) as ServerMessage
+        if (message.type === 'ready') seen.ready = true
+        else if (message.type === 'error') seen.errors.push(message.message)
+        else if (message.type === 'objective') {
+          seen.objectives = { covered: message.covered, total: message.total }
+        } else if (message.type === 'transcript') {
+          if (message.role === 'interviewer') seen.interviewer.push(message.text)
+          else if (message.final) seen.candidate.push(message.text)
+        }
+      })
+      return new Promise<{ ws: WebSocket; seen: typeof seen }>((resolve) => {
+        ws.on('open', () => {
+          ws.send(
+            JSON.stringify({
+              type: 'start',
+              problemSlug: 'concept-database-index',
+              language: 'typescript',
+              ...(resume ? { resume } : {}),
+            } satisfies ClientMessage),
+          )
+          resolve({ ws, seen })
+        })
+      })
+    }
+
+    const stream = async (ws: WebSocket, audio: Buffer) => {
+      for (let offset = 0; offset < audio.length; offset += FRAME) {
+        ws.send(audio.subarray(offset, Math.min(offset + FRAME, audio.length)), { binary: true })
+        await sleep(20)
+      }
+      const silence = Buffer.alloc(FRAME)
+      for (let i = 0; i < 40; i++) {
+        ws.send(silence, { binary: true })
+        await sleep(20)
+      }
+    }
+
+    const first = await openRound()
+    const readyBy = Date.now() + 20_000
+    while (!first.seen.ready && Date.now() < readyBy) await sleep(100)
+    check(first.seen.ready, 'a spoken round starts')
+
+    // Reaches essential point 1 — what an index physically is — and nothing else.
+    const answer = await speechFor(
+      'The database builds a separate B-tree holding that column sorted, with a pointer back to each row.',
+    )
+    await stream(first.ws, answer)
+
+    const gradedBy = Date.now() + 40_000
+    while (first.seen.objectives === null && Date.now() < gradedBy) await sleep(200)
+
+    check(first.seen.candidate.length > 0, 'transcribes the answer', `"${first.seen.candidate.join(' ').slice(0, 50)}"`)
+    check(
+      first.seen.objectives !== null && first.seen.objectives.covered.length > 0,
+      'the grader marks a point without the interviewer being asked to',
+      first.seen.objectives ? `covered ${first.seen.objectives.covered.join(', ')} of ${first.seen.objectives.total}` : 'nothing arrived',
+    )
+    check(first.seen.errors.length === 0, 'no errors', first.seen.errors.join('; '))
+
+    // Everything said, as the browser's record would hand it back.
+    const transcript = [
+      ...first.seen.interviewer.map((text) => ({ role: 'interviewer' as const, text, at: Date.now() })),
+      ...first.seen.candidate.map((text) => ({ role: 'candidate' as const, text, at: Date.now() })),
+    ]
+    first.ws.send(JSON.stringify({ type: 'end' } satisfies ClientMessage))
+    await sleep(300)
+    first.ws.close()
+    await sleep(500)
+
+    const again = await openRound(transcript)
+    const resumedBy = Date.now() + 20_000
+    while (!again.seen.ready && Date.now() < resumedBy) await sleep(100)
+    check(again.seen.ready, 'and resumes on a fresh connection', `${transcript.length} lines replayed`)
+
+    // The tally is derived from the transcript, so it comes back on its own —
+    // nothing about coverage is persisted anywhere.
+    const regradedBy = Date.now() + 40_000
+    while (again.seen.objectives === null && Date.now() < regradedBy) await sleep(200)
+    check(
+      again.seen.objectives !== null && again.seen.objectives.covered.length > 0,
+      'recovers the tally from the transcript alone',
+      again.seen.objectives ? `covered ${again.seen.objectives.covered.join(', ')}` : 'nothing arrived',
+    )
+    // The real point of resuming against the live API: a rebuilt history that
+    // the provider rejects fails here, not in front of the candidate.
+    check(again.seen.errors.length === 0, 'the rebuilt history is accepted by the model', again.seen.errors.join('; '))
+
+    again.ws.send(JSON.stringify({ type: 'end' } satisfies ClientMessage))
+    await sleep(300)
+    again.ws.close()
+  }
+
   child.kill()
   await sleep(300)
 

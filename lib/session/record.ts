@@ -96,7 +96,17 @@ export interface RoundRecord {
    * derive an outcome from and every one of them was filed as "abandoned"
    * regardless of how well it actually went.
    */
-  objectives?: { covered: number; total: number; essential: number }
+  /**
+   * `indices` is what the report needs and the count is what the history needs.
+   *
+   * Both are kept because they answer different questions. A row saying "4 of 9"
+   * is the progress page's whole job; naming the five that were missed is the
+   * report's. Storing only the count meant the report re-derived coverage from
+   * the transcript and could contradict the list the candidate had just been
+   * shown. Optional, because records written before this existed are still in
+   * localStorage.
+   */
+  objectives?: { covered: number; total: number; essential: number; indices?: number[] }
   concluded?: { verdict: 'strong' | 'solid' | 'mixed' | 'weak'; summary: string }
   /** Editor contents as they stood last time anything was recorded. */
   files: { path: string; content: string }[]
@@ -243,7 +253,7 @@ export function recordObservations(meta: RoundMeta, observations: ObservationRec
 
 export function recordObjectives(
   meta: RoundMeta,
-  objectives: { covered: number; total: number; essential: number },
+  objectives: { covered: number; total: number; essential: number; indices?: number[] },
 ): void {
   mutate(meta, (round) => {
     round.objectives = objectives

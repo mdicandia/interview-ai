@@ -17,6 +17,7 @@
  */
 
 import { getProblem } from '../problems'
+import { getQuestion } from '../questions'
 import { createDeepSeekProvider } from '../server/pipeline/llm'
 import { generateReport, type RoundEvidence } from '../server/interview/report'
 
@@ -139,12 +140,52 @@ const twoSumRound: RoundEvidence = {
   ],
 }
 
+/* --------------------------------------------------- round 3: a spoken round
+ * Coverage is known in advance and handed to the report the way a real round
+ * hands it over. They reach points 1 and 2 — what an index is, and what it does
+ * to reads — and never once mention the write cost or the disk space, which are
+ * essential points 3 and 4.
+ *
+ * The report must not quietly disagree with that. It has already been shown to
+ * them on the panel at the end of the round, and naming the essential points
+ * they missed is the single most useful sentence it can produce.
+ */
+const indexRound: RoundEvidence = {
+  slug: 'concept-database-index',
+  title: 'What an index actually does',
+  label: 'Discussion',
+  language: null,
+  enteredAt: min(52),
+  elapsedMs: 9 * 60_000,
+  allottedMs: 10 * 60_000,
+  transcript: [
+    { role: 'interviewer', text: 'You add an index to a column on a large table. What actually changes?', at: min(52.5) },
+    { role: 'candidate', text: 'So the database make a separate structure, a tree, B-tree, and inside is the values of that column in order, sorted, with a pointer to find the row.', at: min(53.5) },
+    { role: 'interviewer', text: 'And what does that buy you?', at: min(55) },
+    { role: 'candidate', text: 'When you filter for this column you no read every row, you go down the tree, is logaritmic. Much less work for a big table.', at: min(56) },
+    { role: 'interviewer', text: 'Is there anything you would think about before adding one?', at: min(58) },
+    { role: 'candidate', text: 'Em. I think you look at the queries, which column is in the where. And maybe if the table is small is not worth it.', at: min(59) },
+    { role: 'interviewer', text: 'Anything it costs you?', at: min(60) },
+    { role: 'candidate', text: 'Em... I am not sure. Maybe the planner sometimes no use it? I do not know really.', at: min(60.5) },
+  ],
+  hints: [],
+  runs: [],
+  files: [],
+  // Points 1 and 2 of the essential-first ordering. 3 (writes get slower) and
+  // 4 (disk space) were never reached.
+  objectives: { covered: 2, total: 9, essential: 4, indices: [1, 2] },
+  concluded: {
+    verdict: 'mixed',
+    summary: 'Solid on what an index is and does for reads; never got to what it costs.',
+  },
+}
+
 async function main() {
   const key = process.env.DEEPSEEK_API_KEY
   if (!key) throw new Error('DEEPSEEK_API_KEY is not set — add it to .env.local')
 
-  const rounds = [retryRound, twoSumRound].map((evidence) => {
-    const problem = getProblem(evidence.slug)
+  const rounds = [retryRound, twoSumRound, indexRound].map((evidence) => {
+    const problem = getProblem(evidence.slug) ?? getQuestion(evidence.slug)
     if (!problem) throw new Error(`No such problem: ${evidence.slug}`)
     return { evidence, problem }
   })
@@ -189,8 +230,44 @@ async function main() {
   const retry = report.rounds.find((r) => r.slug === 'flaky-retry')
   const twoSum = report.rounds.find((r) => r.slug === 'two-sum')
 
+  const spoken = report.rounds.find((r) => r.slug === 'concept-database-index')
+
   if (!retry) problems.push('flaky-retry round is missing entirely')
   if (!twoSum) problems.push('two-sum round is missing entirely')
+  if (!spoken) problems.push('concept-database-index round is missing entirely')
+
+  if (spoken) {
+    /*
+     * The report is handed the tally. It must act on it rather than around it.
+     *
+     * Two essential points of four were never reached, so a high content score
+     * would be the report contradicting the panel the candidate already read —
+     * the failure this evidence exists to catch.
+     */
+    if (spoken.content.score > 3) {
+      problems.push(
+        `spoken round scored ${spoken.content.score}/5 on content, having reached 2 of 4 ` +
+          'essential points. The report is scoring above the coverage it was given.',
+      )
+    }
+
+    // And it must say *which* ones. "Be more thorough" is not actionable; "you
+    // never mentioned what an index costs on writes" is the thing to go and learn.
+    const text = [
+      spoken.content.comment,
+      spoken.diagnosis ?? '',
+      ...spoken.didWell,
+      ...spoken.doDifferently,
+    ]
+      .join(' ')
+      .toLowerCase()
+    if (!/write|insert|update|delete|disk|space|cost/.test(text)) {
+      problems.push(
+        'spoken round never names the essential points that were missed (the write cost, ' +
+          'the disk space). It was told exactly which ones they were.',
+      )
+    }
+  }
 
   if (retry && twoSum) {
     // Content is objective here: one round ends green with the reference fix,
@@ -268,7 +345,9 @@ async function main() {
       .replace(/\s+/g, ' ')
       .trim()
 
-  const said = [...retryRound.transcript, ...twoSumRound.transcript]
+  // Every round, or the checker reports a real quote as fabricated the moment a
+  // round is added — which is exactly what it did.
+  const said = [...retryRound.transcript, ...twoSumRound.transcript, ...indexRound.transcript]
     .map((line) => normalise(line.text))
     .join(' ')
 

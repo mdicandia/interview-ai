@@ -48,6 +48,18 @@ export interface RoundEvidence {
   runs: { at: number; passed: number; total: number; failing: string[]; compileError?: string }[]
   files: { path: string; content: string }[]
   enteredAt: number
+  /**
+   * What the coverage grader found, for a spoken round.
+   *
+   * `indices` are 1-based into the points ordered essential-first — the same
+   * numbering the interviewer and the grader used, and the same list the
+   * candidate was shown at the end of the round. Without this the report
+   * re-derives coverage from the transcript on its own and can contradict that
+   * list, which is the one piece of feedback they have already read.
+   */
+  objectives?: { covered: number; total: number; essential: number; indices?: number[] }
+  /** The interviewer's closing call, if it ended the round itself. */
+  concluded?: { verdict: 'strong' | 'solid' | 'mixed' | 'weak'; summary: string }
 }
 
 export interface ReportRequest {
@@ -239,18 +251,85 @@ function starterFor(problem: Problem | DiscussionProblem, language: Language | n
   return map
 }
 
+/**
+ * Essential points first, then the rest.
+ *
+ * This ordering *is* the numbering. The interviewer's prompt, the grader's
+ * prompt, the pips the candidate watches and the list revealed at the end all
+ * derive point numbers this way, so anything that renumbers here silently
+ * reassigns every recorded tally.
+ */
+function orderedPoints(problem: DiscussionProblem) {
+  return [
+    ...problem.expectedPoints.filter((p) => p.essential),
+    ...problem.expectedPoints.filter((p) => !p.essential),
+  ]
+}
+
+/**
+ * What the grader concluded, rendered for the report.
+ *
+ * Told to outrank the model's own reading for the same reason the interviewer's
+ * live observations are: this was decided by something that read the transcript
+ * with the answer key in hand, and it is what the candidate was shown. A report
+ * that quietly disagrees with the panel from thirty seconds earlier is worse
+ * than one that says less.
+ */
+function coverageLines(problem: DiscussionProblem, evidence: RoundEvidence): string[] {
+  const indices = evidence.objectives?.indices
+  if (!indices) return []
+
+  const points = orderedPoints(problem)
+  const reached = points.map((_, i) => i + 1).filter((n) => indices.includes(n))
+  const missed = points.map((_, i) => i + 1).filter((n) => !indices.includes(n))
+
+  const lines = [
+    'WHAT THEY ACTUALLY REACHED, AS SCORED DURING THE ROUND:',
+    'Decided by a separate grader reading the whole transcript against the numbered list',
+    'above, and already shown to them when the round ended. Treat it as settled. Do not',
+    'credit them for a point listed as never reached, and do not contradict this tally —',
+    'if your own reading disagrees, the interesting thing is *why*, and that belongs in',
+    'the comment rather than in a different score.',
+    reached.length > 0 ? `Reached: ${reached.join(', ')}` : 'Reached: none of them.',
+  ]
+
+  if (missed.length > 0) {
+    lines.push('Never reached:')
+    for (const n of missed) {
+      lines.push(`${n}. ${points[n - 1].essential ? '[essential] ' : ''}${points[n - 1].point}`)
+    }
+    lines.push(
+      'Name the essential ones they missed, in their own words, in the round comment.',
+      'That is the most useful sentence in this whole report: it is the specific thing',
+      'to go and learn.',
+    )
+  }
+
+  if (evidence.concluded) {
+    lines.push(
+      '',
+      `The interviewer closed the round itself, calling it "${evidence.concluded.verdict}": ` +
+        evidence.concluded.summary,
+    )
+  }
+
+  return lines
+}
+
 /** The answer key. Server-side only — this is the whole reason it exists. */
 function answerKey(problem: Problem | DiscussionProblem, language: Language | null): string[] {
   const lines: string[] = []
 
   if (problem.kind === 'discussion') {
     lines.push('WHAT A GOOD ANSWER REACHES (they never saw this):')
-    for (const point of problem.expectedPoints) {
+    // Numbered, essential-first, matching the numbering the grader used — the
+    // coverage block below refers to these numbers.
+    orderedPoints(problem).forEach((point, i) => {
       lines.push(
-        `- ${point.essential ? '[essential] ' : ''}${point.point}` +
+        `${i + 1}. ${point.essential ? '[essential] ' : ''}${point.point}` +
           (point.weakAnswer ? ` — a weak answer says instead: ${point.weakAnswer}` : ''),
       )
-    }
+    })
     return lines
   }
 
@@ -300,6 +379,11 @@ function renderRound(
 
   const key = answerKey(problem, evidence.language)
   if (key.length > 0) lines.push('', ...key)
+
+  if (problem.kind === 'discussion') {
+    const coverage = coverageLines(problem, evidence)
+    if (coverage.length > 0) lines.push('', ...coverage)
+  }
 
   /* --- what they wrote ---------------------------------------------------- */
 
@@ -447,12 +531,20 @@ export async function generateReport(
     },
   ]
 
-  // Thinking is on and the budget is large: this runs once, after the session,
-  // where a slow considered answer costs nothing. Note that reasoning tokens come
-  // out of the same budget as the answer, so a tight cap here returns an empty
-  // string rather than a short report — `complete` throws with the token count
-  // when that happens.
-  const raw = await llm.complete({ messages, maxTokens: 12_000, thinking: true, json: true })
+  /*
+   * Thinking is on and the budget is large: this runs once, after the session,
+   * where a slow considered answer costs nothing. Reasoning tokens come out of
+   * the same budget as the answer, so a tight cap returns an empty string rather
+   * than a short report — `complete` throws with the token count when that
+   * happens, which is how this number was found to be too small.
+   *
+   * Measured: three rounds spent all 12,000 on reasoning and produced nothing.
+   * The budget has to scale with the session, because both halves do — more
+   * rounds means more to think about *and* more JSON to write. A fixed number
+   * fails silently on exactly the long sessions worth reporting on.
+   */
+  const budget = Math.min(60_000, 9_000 + request.rounds.length * 5_000)
+  const raw = await llm.complete({ messages, maxTokens: budget, thinking: true, json: true })
 
   let parsed: Record<string, unknown>
   try {

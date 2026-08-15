@@ -103,6 +103,10 @@ export function QuestionRoom({ question }: { question: ClientQuestion }) {
         covered: objectives.covered.length,
         total: objectives.total,
         essential: objectives.essential,
+        // The indices, not just the count: the report resolves them back to the
+        // point text server-side, so it can name what was missed rather than
+        // guessing at it from the transcript.
+        indices: objectives.covered,
       }),
     [meta],
   )

@@ -136,6 +136,17 @@ async function main() {
     const talked = outcomeOf({ slug: 'q2', source: 'question', transcript: [line('well, an index is…')] })
     check(talked.outcome === 'partial', 'talking with nothing tallied still beats abandoning it')
 
+    // The interviewer speaks first now, so *every* round has a transcript. A
+    // length check therefore scored sitting in silence as a partial answer, and
+    // counted it as spoken aloud on the progress page.
+    const listened = outcomeOf({
+      slug: 'q2b',
+      source: 'question',
+      transcript: [{ role: 'interviewer' as const, text: 'What changes when you add an index?', at: now }],
+    })
+    check(listened.outcome === 'abandoned', 'but the interviewer talking alone is not talking')
+    check(listened.spokeAloud === false, 'and does not count as spoken aloud')
+
     const covered = outcomeOf({
       slug: 'q3',
       source: 'question',
@@ -254,7 +265,25 @@ async function main() {
     check(trend.enough, 'six scored rounds is enough to read a direction')
     check(trend.contentDelta === 0, 'flat content reads as flat', String(trend.contentDelta))
     check((trend.deliveryDelta ?? 0) > 0, 'rising delivery reads as rising', String(trend.deliveryDelta))
-    check(trend.gap !== null && trend.gap < 0, 'and the gap says expression is the lag', String(trend.gap?.toFixed(2)))
+    /*
+     * The gap is measured over the recent window, not the whole history.
+     *
+     * A lifetime mean is stuck in the past: on this exact shape it stayed at
+     * -1.5 long after delivery had caught up, so the panel went on saying "you
+     * know more than you are getting across" while its own deltas showed the
+     * opposite. What the panel has to be able to say is *"it used to be, and it
+     * isn't now"* — which needs both ends.
+     */
+    check(
+      trend.gapWas !== null && trend.gapWas < -0.75,
+      'expression was the lag early on',
+      String(trend.gapWas?.toFixed(2)),
+    )
+    check(
+      trend.gap !== null && trend.gap > -0.5,
+      'and is no longer, which a lifetime mean could never say',
+      String(trend.gap?.toFixed(2)),
+    )
 
     // An unscored round has no delivery. Counting its absence as a zero would
     // invent a collapse out of a round done in silence.

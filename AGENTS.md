@@ -10,11 +10,14 @@ A local, single-user tool for practising **live coding interviews**: a voice
 interviewer talking to you while you write code in a shared editor. Build plan and
 phase breakdown: `~/.claude/plans/can-we-develop-something-wobbly-lamport.md`.
 
-Status: **editor, execution, voice interviewer with tool use, hints, backchannel
-clips, spoken rounds with a coverage grader, and the post-session report all
-work.** Still missing: editor linting, and automatic socket reconnection — a
-dropped connection is recovered by pressing Start again, which resumes from the
-saved transcript rather than reconnecting on its own.
+Status: **all of it works** — editor with syntax linting, execution in three
+runtimes, a voice interviewer that opens the round and uses tools, hints,
+backchannel clips, spoken rounds with a coverage grader, resumable sessions with
+automatic reconnection, and the post-session report.
+
+Nothing on this line is a promise about the future; if you add something, update
+it. It claimed linting and reconnection were missing for a day after both had
+shipped, which a UI review caught before a human did.
 
 ## Three execution paths
 
@@ -136,10 +139,10 @@ pnpm verify:voice      # the raw pipeline against Deepgram, Cartesia and DeepSee
   built output, including the prerendered HTML and RSC payloads, which is where
   the hint ladder was found shipping in full.
 - `questions/*.ts` — the non-coding question bank (`kind: 'discussion'`).
-  **Deliberately not in `PROBLEMS` and not in the picker.** A verbal answer has no
-  test suite, so nothing can grade one until the interviewer exists; wiring them
-  into the UI now would ship a screen that shows a question and does nothing. The
-  rubrics are the durable part and are verified structurally today.
+  **Deliberately not in `PROBLEMS`** — a question has no test suite, so it cannot
+  share a type with something that does. It *is* in the picker, under "Questions
+  (no coding)", and playable: the interviewer asks it and the coverage grader
+  scores it against `expectedPoints`.
 - `lib/runtime/` — worker protocol, comparison, and the supervising client.
 - `public/workers/` — the two execution workers. See constraint 1.
 - `lib/session/` — session templates and the timer (`store.ts`), plus the evidence

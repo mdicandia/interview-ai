@@ -48,8 +48,14 @@ function Delta({ value, unit }: { value: number; unit: string }) {
   )
 }
 
-/** A five-pip score, so content and delivery are comparable at a glance. */
-function Pips({ score, label }: { score: number; label: string }) {
+/**
+ * A five-pip score, so content and delivery are comparable at a glance.
+ *
+ * Same colours as the chart above and the report's tiles. Both axes used to
+ * render in the accent here while the chart two inches up used accent and warn —
+ * one page, two colour languages for the same two things.
+ */
+function Pips({ score, label }: { score: number; label: 'content' | 'delivery' }) {
   return (
     <span className="flex items-center gap-1" title={`${label} ${score} of 5`}>
       <span className="text-[10.5px] uppercase tracking-wide text-ink-2">{label}</span>
@@ -57,7 +63,9 @@ function Pips({ score, label }: { score: number; label: string }) {
         {[1, 2, 3, 4, 5].map((n) => (
           <span
             key={n}
-            className={`size-1 rounded-full ${n <= score ? 'bg-accent' : 'bg-surface-3'}`}
+            className={`size-1 rounded-full ${
+              n <= score ? (label === 'delivery' ? 'bg-warn' : 'bg-accent') : 'bg-surface-3'
+            }`}
           />
         ))}
       </span>
@@ -77,11 +85,14 @@ function Pips({ score, label }: { score: number; label: string }) {
  * trend from three points — a practice tool that flatters you is useless.
  */
 function AxisTrendPanel({ trend }: { trend: AxisTrend }) {
-  const { points, contentDelta, deliveryDelta, enough, gap } = trend
+  const { points, contentDelta, deliveryDelta, enough, gap, gapWas } = trend
   if (points.length < 2) return null
 
-  const H = 34
-  const W = 240
+  // Big enough to read a score off. At 240×34 the 1-to-5 range was compressed
+  // into 34 pixels with no dots and no axis, so the chart could show a
+  // direction and nothing else.
+  const H = 96
+  const W = 460
   const step = points.length > 1 ? W / (points.length - 1) : 0
   // Scores are 1–5, so the axis is fixed rather than fitted. A fitted axis would
   // turn a flat run of 4s into a dramatic-looking line.
@@ -97,19 +108,35 @@ function AxisTrendPanel({ trend }: { trend: AxisTrend }) {
   const contentPath = path((p) => p.content)
   const deliveryPath = path((p) => p.delivery)
 
+  /*
+   * The sentence, and it is allowed to notice that things changed.
+   *
+   * "Closing" is the reading that matters most and the old lifetime mean could
+   * never produce it: the gap was still negative on average long after delivery
+   * had caught up, so the panel went on saying "you know more than you are
+   * getting across" while its own deltas disagreed.
+   */
+  const closing =
+    gap !== null && gapWas !== null && gapWas <= -0.75 && gap > gapWas + 0.5
   const reading =
     !enough || contentDelta === null
       ? `Too few scored rounds to call a direction yet — ${points.length} so far, and it takes about six.`
-      : gap !== null && gap <= -0.75
-        ? 'Your delivery scores sit below your content scores: you know more than you are getting across.'
-        : gap !== null && gap >= 0.75
-          ? 'You put things across better than you know them — the gap to close is the material, not the English.'
-          : 'Content and delivery are moving together.'
+      : closing && gap !== null && gap > -0.75
+        ? 'Your English used to be the bottleneck and is not any more — delivery has caught up with what you know.'
+        : closing
+          ? 'Still saying less than you know, but the gap is closing: delivery is rising faster than content.'
+          : gap !== null && gap <= -0.75
+            ? 'Your delivery scores sit below your content scores: you know more than you are getting across.'
+            : gap !== null && gap >= 0.75
+              ? 'You put things across better than you know them — the gap to close is the material, not the English.'
+              : 'Content and delivery are moving together.'
 
   return (
-    <section className="mb-3 rounded-lg border border-surface-3 bg-surface-1/40 px-4 py-3.5">
-      <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1">
-        <h2 className="text-[13px] text-ink-0">Knowing it, and saying it</h2>
+    <section className="mb-3 rounded-lg border border-surface-3 bg-surface-1/40 px-5 py-4">
+      <div className="mb-2 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+        <h2 className="text-[11px] uppercase tracking-wider text-ink-2">
+          Knowing it, and saying it
+        </h2>
         <span className="text-[11px] text-ink-2">{points.length} scored rounds</span>
         {enough && (
           <span className="ml-auto flex items-center gap-3 text-[11.5px]">
@@ -123,26 +150,69 @@ function AxisTrendPanel({ trend }: { trend: AxisTrend }) {
         )}
       </div>
 
-      <div className="flex items-center gap-4">
+      {/*
+        The most important sentence in the product, at the size of one.
+
+        It was 12px `ink-1` *below* a decorative chart — smaller than the problem
+        titles under it. The chart supports the sentence; it is not the point.
+      */}
+      <p className="mb-4 max-w-[68ch] text-[15px] leading-relaxed text-ink-0">{reading}</p>
+
+      <div className="flex items-start gap-4">
         <svg
           viewBox={`0 0 ${W} ${H}`}
-          className="h-[34px] w-[240px] shrink-0 overflow-visible"
-          aria-hidden
+          className="h-[96px] w-full max-w-[460px] shrink overflow-visible"
+          role="img"
+          aria-label={`Content and delivery scores across ${points.length} scored rounds. ${reading}`}
         >
+          {/* Gridlines at the ends of the scale, so a dot has a value. */}
+          {[1, 3, 5].map((score) => (
+            <line
+              key={score}
+              x1={0}
+              x2={W}
+              y1={y(score)}
+              y2={y(score)}
+              stroke="var(--color-surface-3)"
+              strokeWidth="1"
+            />
+          ))}
+          {[1, 5].map((score) => (
+            <text
+              key={score}
+              x={-6}
+              y={y(score) + 3}
+              textAnchor="end"
+              fontSize="9"
+              fill="var(--color-ink-2)"
+            >
+              {score}
+            </text>
+          ))}
+
           {contentPath && (
-            <path d={contentPath} fill="none" stroke="var(--color-accent)" strokeWidth="1.5" />
+            <path d={contentPath} fill="none" stroke="var(--color-accent)" strokeWidth="1.75" />
           )}
           {deliveryPath && (
             <path
               d={deliveryPath}
               fill="none"
               stroke="var(--color-warn)"
-              strokeWidth="1.5"
-              strokeDasharray="3 2"
+              strokeWidth="1.75"
+              strokeDasharray="4 3"
             />
           )}
+          {/* A dot per attempt: without them you cannot tell six rounds from twenty. */}
+          {points.map((p, i) => (
+            <circle key={`c${i}`} cx={i * step} cy={y(p.content)} r="2.5" fill="var(--color-accent)" />
+          ))}
+          {points.map((p, i) =>
+            p.delivery === null ? null : (
+              <circle key={`d${i}`} cx={i * step} cy={y(p.delivery)} r="2.5" fill="var(--color-warn)" />
+            ),
+          )}
         </svg>
-        <div className="flex flex-col gap-1 text-[10.5px]">
+        <div className="flex shrink-0 flex-col gap-1 text-[10.5px]">
           <span className="flex items-center gap-1.5 text-ink-2">
             <span className="h-px w-4 bg-accent" /> content
           </span>
@@ -151,8 +221,6 @@ function AxisTrendPanel({ trend }: { trend: AxisTrend }) {
           </span>
         </div>
       </div>
-
-      <p className="mt-3 max-w-[62ch] text-[12px] leading-relaxed text-ink-1">{reading}</p>
     </section>
   )
 }
@@ -284,9 +352,13 @@ export function HistoryView() {
           <div className="py-16">
             <h2 className="mb-2 text-[15px] text-ink-0">Nothing recorded yet</h2>
             <p className="mb-5 max-w-[54ch] text-[13px] leading-relaxed text-ink-2">
-              An attempt is written here when you end a session. Come back after a couple of
-              rounds — a single one has nothing to compare against, which is the only thing
-              this page is for.
+              {/* Was "when you end a session", which stopped being true once
+                  `checkpointRound` started writing on leaving a round and on
+                  `pagehide` — and would have you believe an abandoned round
+                  was thrown away. */}
+              An attempt is written here as you leave each round, whether or not you finish
+              the session. Come back after a couple of rounds — a single one has nothing to
+              compare against, which is the only thing this page is for.
             </p>
             <Link
               href="/"

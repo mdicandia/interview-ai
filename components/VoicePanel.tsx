@@ -37,7 +37,7 @@ const TURN_HINT: Record<TurnState, string> = {
   speaking: 'Hold to talk if you want to cut in',
 }
 
-const TURN_COLOR: Record<TurnState, string> = {
+export const TURN_COLOR: Record<TurnState, string> = {
   idle: 'bg-ink-2',
   listening: 'bg-pass',
   thinking: 'bg-warn',
@@ -64,6 +64,14 @@ export interface VoicePanelProps {
   onObjectives?: (objectives: { covered: number[]; total: number; essential: number }) => void
   /** Fires once, when the interviewer ends the round. */
   onComplete?: (outcome: RoundOutcome) => void
+  /**
+   * Whose turn it is, for anything outside this panel that needs to show it.
+   *
+   * Null when the round is not live. The panel can be hidden behind another tab
+   * while the interview carries on, and every signal about turn-taking used to
+   * be hidden with it — so the room needs its own copy.
+   */
+  onTurn?: (turn: TurnState | null) => void
 }
 
 export function VoicePanel({
@@ -77,6 +85,7 @@ export function VoicePanel({
   onObservations,
   onObjectives,
   onComplete,
+  onTurn,
 }: VoicePanelProps) {
   const ref = useRef<VoiceClient | null>(null)
   const getClient = () => (ref.current ??= new VoiceClient())
@@ -119,6 +128,10 @@ export function VoicePanel({
   useEffect(() => {
     if (snapshot.outcome) onComplete?.(snapshot.outcome)
   }, [onComplete, snapshot.outcome])
+
+  useEffect(() => {
+    onTurn?.(snapshot.status === 'live' ? snapshot.turn : null)
+  }, [onTurn, snapshot.status, snapshot.turn])
 
   // Push the code to the interviewer, debounced. It only needs to be roughly
   // current — a keystroke-accurate view would mean a message per character.
@@ -200,13 +213,24 @@ export function VoicePanel({
   useEffect(() => {
     if (!live) return
 
-    // Only consulted when *starting*. Typing a space in the editor must not open
-    // the microphone; releasing it must always close one that is open.
+    /*
+     * Only consulted when *starting*. Typing a space in the editor must not open
+     * the microphone; releasing it must always close one that is open.
+     *
+     * Buttons and links count too. Space is how a keyboard user presses a
+     * focused button, and swallowing it app-wide meant that while a round was
+     * live, every button in the app silently stopped responding to it.
+     */
     const typing = () => {
       const active = document.activeElement
       return (
         active instanceof HTMLElement &&
-        (active.isContentEditable || active.closest('.cm-editor') !== null)
+        (active.isContentEditable ||
+          active.closest('.cm-editor') !== null ||
+          // The talk button is the exception: it has no click handler, so Space
+          // while it is focused should still open the microphone.
+          (active.dataset.pushToTalk === undefined &&
+            ['BUTTON', 'A', 'INPUT', 'TEXTAREA', 'SELECT', 'SUMMARY'].includes(active.tagName)))
       )
     }
 
@@ -244,7 +268,10 @@ export function VoicePanel({
           Interviewer
         </h2>
         {live && (
-          <span className="flex items-center gap-1.5">
+          // Announced as well as shown: a turn change was previously visible
+          // only, so anyone using a screen reader had no way to know the
+          // interviewer had started speaking.
+          <span className="flex items-center gap-1.5" role="status" aria-live="polite">
             <span
               className={`size-2 rounded-full ${TURN_COLOR[snapshot.turn]} ${
                 snapshot.turn === 'speaking' || snapshot.turn === 'thinking'
@@ -275,8 +302,21 @@ export function VoicePanel({
         </div>
       </header>
 
+      {/*
+        A reconnection is amber, not red.
+
+        `status: 'connecting'` while an error string is set means the client is
+        retrying — it is recovering, not broken, and red said the opposite of
+        what was happening.
+      */}
       {snapshot.error && (
-        <p className="shrink-0 border-b border-surface-3 bg-fail/10 px-3 py-2 text-[11.5px] leading-relaxed text-fail">
+        <p
+          role={connecting ? 'status' : 'alert'}
+          aria-live={connecting ? 'polite' : 'assertive'}
+          className={`shrink-0 border-b border-surface-3 px-3 py-2 text-[11.5px] leading-relaxed ${
+            connecting ? 'bg-warn/10 text-warn' : 'bg-fail/10 text-fail'
+          }`}
+        >
           {snapshot.error}
         </p>
       )}
@@ -372,6 +412,7 @@ export function VoicePanel({
           */}
           <button
             type="button"
+            data-push-to-talk=""
             disabled={paused}
             onPointerDown={(event) => {
               event.currentTarget.setPointerCapture(event.pointerId)
@@ -398,7 +439,9 @@ export function VoicePanel({
               ? TURN_HINT[snapshot.turn]
               : TURN_HINT[snapshot.turn]}
           </p>
-          <p className="mt-1 text-center text-[10px] text-ink-2/70">
+          {/* Was `text-ink-2/70` at 10px — 2.54:1, on the line that documents
+              the only keyboard shortcut for talking. */}
+          <p className="mt-1 text-center text-[10.5px] text-ink-2">
             or hold <kbd className="rounded border border-surface-3 px-1">space</kbd> outside
             the editor
           </p>

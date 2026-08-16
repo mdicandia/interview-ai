@@ -635,6 +635,26 @@ async function main() {
     while (!first.seen.ready && Date.now() < readyBy) await sleep(100)
     check(first.seen.ready, 'a spoken round starts')
 
+    /*
+     * The interviewer opens, before anyone has said anything to it.
+     *
+     * This is the regression that matters most. There used to be no opening turn
+     * at all: the round began in silence and the first thing spoken was the
+     * 45-second idle nudge, which — having never asked a question — produced
+     * "I'll wait for them to answer" out loud, in the third person.
+     */
+    const openedBy = Date.now() + 25_000
+    while (first.seen.interviewer.length === 0 && Date.now() < openedBy) await sleep(200)
+    check(
+      first.seen.interviewer.length > 0,
+      'the interviewer opens the round without being spoken to first',
+      `"${first.seen.interviewer.join(' ').slice(0, 60)}"`,
+    )
+    check(
+      !/\bthey\b|\btheir\b|\bthem\b/i.test(first.seen.interviewer.join(' ')),
+      'and talks to the candidate rather than about them',
+    )
+
     // Reaches essential point 1 — what an index physically is — and nothing else.
     const answer = await speechFor(
       'The database builds a separate B-tree holding that column sorted, with a pointer back to each row.',

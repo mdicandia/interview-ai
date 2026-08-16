@@ -11,6 +11,7 @@ import type { ServerMessage, TurnState } from '../protocol'
 import {
   buildFrozenPrefix,
   buildIdleNote,
+  buildOpeningNote,
   buildVolatileNote,
   type VolatileContext,
 } from './prompt'
@@ -224,7 +225,26 @@ export class InterviewSession {
     })
 
     this.#config.send({ type: 'ready' })
-    this.#armIdleTimer()
+
+    /*
+     * The interviewer speaks first, because a real one does.
+     *
+     * Without this the round opened in silence and stayed there: nothing asked
+     * the question, and the first thing the candidate heard was the 45-second
+     * idle nudge — which, having never asked anything, produced "I'll wait for
+     * them to answer" said out loud. The model was narrating to itself and the
+     * candidate was listening to it.
+     *
+     * It is also the part most worth rehearsing. The opening seconds are where
+     * an interview is most uncomfortable, and a tool that skips them practises
+     * the easy half.
+     *
+     * Not on a resume: `rehydrate` has already filled the history, and the round
+     * is mid-conversation. Opening again would re-ask a question that was
+     * answered twenty minutes ago.
+     */
+    if (this.#history.length === 0) await this.#respond(buildOpeningNote(this.#config.problem.kind))
+    else this.#armIdleTimer()
   }
 
   /** Raw microphone audio from the browser. */

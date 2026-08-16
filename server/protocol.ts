@@ -113,8 +113,14 @@ export type TurnState =
   | 'speaking'
 
 export type ServerMessage =
-  /** Session is up; the pipeline is connected and audio may start flowing. */
-  | { type: 'ready'; greeting?: string }
+  /**
+   * Session is up; the pipeline is connected and audio may start flowing.
+   *
+   * Carried a `greeting` field for a while that nothing ever set and nothing
+   * ever rendered — a stub for the opening turn, which is now a real spoken turn
+   * from the interviewer rather than a string on this message.
+   */
+  | { type: 'ready' }
   | { type: 'state'; turn: TurnState }
   /**
    * Transcript line. `final: false` lines are interim guesses that will be

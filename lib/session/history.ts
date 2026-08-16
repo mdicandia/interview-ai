@@ -78,6 +78,17 @@ function write(attempts: Attempt[]): void {
  * cannot have failed something you never submitted, and conflating the two would
  * make the solve rate a measure of how often you opened a problem.
  */
+/**
+ * Did the candidate actually say anything?
+ *
+ * The transcript holds both speakers, so its length answers a different question
+ * — "was the interviewer connected" — and using it here quietly gave credit for
+ * sitting in silence while the interviewer talked.
+ */
+function spokeAloud(round: RoundRecord): boolean {
+  return round.transcript.some((line) => line.role === 'candidate')
+}
+
 function outcomeOf(round: RoundRecord): Outcome {
   /*
    * A spoken round runs no tests, so the code path below would file every one of
@@ -88,8 +99,10 @@ function outcomeOf(round: RoundRecord): Outcome {
   if (round.source === 'question') {
     const objectives = round.objectives
     if (!objectives || objectives.total === 0) {
-      // Nothing tallied. Talking at all is more than abandoning it.
-      return round.transcript.length > 0 ? 'partial' : 'abandoned'
+      // Nothing tallied. Talking at all is more than abandoning it — but it has
+      // to be *them* talking. The transcript holds both sides, so counting its
+      // length credited a silent round for the interviewer's own opening line.
+      return spokeAloud(round) ? 'partial' : 'abandoned'
     }
     if (objectives.covered >= objectives.essential && objectives.essential > 0) return 'solved'
     return objectives.covered > 0 ? 'partial' : 'not-solved'
@@ -146,7 +159,7 @@ export function recordAttempts(record: SessionRecord, activeSlug?: string): Atte
       ...(round.concluded ? { verdict: round.concluded.verdict } : {}),
       hintsUsed: round.hints.length,
       solutionRevealed: round.solutionRevealed === true,
-      spokeAloud: round.transcript.length > 0,
+      spokeAloud: spokeAloud(round),
     }
 
     const index = attempts.findIndex((a) => a.id === id)
@@ -323,8 +336,18 @@ export interface AxisTrend {
   deliveryDelta: number | null
   /** True once there are enough scored attempts for the deltas to mean anything. */
   enough: boolean
-  /** Mean gap, delivery minus content. Negative means expression is the lag. */
+  /**
+   * Gap over the most recent window, delivery minus content. Negative means
+   * expression is the lag.
+   *
+   * Recent, not lifetime. A lifetime mean cannot ever say "this used to be the
+   * problem and now it is not" — it kept reporting "you know more than you are
+   * getting across" while the deltas beside it showed delivery climbing and the
+   * gap closed. The panel was contradicting its own numbers.
+   */
   gap: number | null
+  /** The same gap over the earliest window, so the reading can name a change. */
+  gapWas: number | null
 }
 
 const MIN_FOR_TREND = 6
@@ -350,16 +373,18 @@ export function axisTrend(attempts: Attempt[]): AxisTrend {
     return before === null || after === null ? null : after - before
   }
 
-  const gaps = scored
-    .filter((p) => p.delivery !== null)
-    .map((p) => p.delivery! - p.content)
+  const gapsIn = (window: typeof scored) =>
+    mean(window.filter((p) => p.delivery !== null).map((p) => p.delivery! - p.content))
 
   return {
     points: scored,
     contentDelta: delta((p) => p.content),
     deliveryDelta: delta((p) => p.delivery),
     enough: scored.length >= MIN_FOR_TREND,
-    gap: mean(gaps),
+    // The same two windows the deltas use, so every number on the panel is
+    // describing the same two periods.
+    gap: gapsIn(last),
+    gapWas: gapsIn(first),
   }
 }
 

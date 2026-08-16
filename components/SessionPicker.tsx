@@ -7,16 +7,19 @@ import { buildCustomSession, buildSession } from '@/lib/session/build'
 import { SESSION_TEMPLATES, templateMinutes } from '@/lib/session/templates'
 import { startSession, useSession } from '@/lib/session/store'
 import { hasEvidence, useRecord } from '@/lib/session/record'
+import { useHistory, type Outcome } from '@/lib/session/history'
 import {
+  DIFFICULTY_COLOR,
   DISCUSSION_FORMAT_LABELS,
   VARIANT_LABELS,
-  type Difficulty,
 } from '@/lib/problems/types'
 
-const DIFFICULTY_COLOR: Record<Difficulty, string> = {
-  easy: 'text-pass',
-  medium: 'text-warn',
-  hard: 'text-fail',
+/** How the last attempt at a problem is badged in the list. */
+const ATTEMPT_STYLE: Record<Outcome, string> = {
+  solved: 'border-pass/40 text-pass',
+  partial: 'border-warn/40 text-warn',
+  'not-solved': 'border-fail/40 text-fail',
+  abandoned: 'border-surface-3 text-ink-2',
 }
 
 function entryTag(entry: CatalogueEntry): string {
@@ -29,8 +32,18 @@ export function SessionPicker({ catalogue }: { catalogue: CatalogueEntry[] }) {
   const router = useRouter()
   const { session, finish } = useSession()
   const { record } = useRecord()
+  const { attempts } = useHistory()
   const [mode, setMode] = useState<'templates' | 'custom'>('templates')
   const [picked, setPicked] = useState<string[]>([])
+
+  /** The most recent outcome per problem, so the list can show what you've done. */
+  const lastOutcome = useMemo(() => {
+    const latest: Record<string, Outcome> = {}
+    for (const attempt of [...attempts].sort((a, b) => a.endedAt - b.endedAt)) {
+      latest[attempt.slug] = attempt.outcome
+    }
+    return latest
+  }, [attempts])
 
   const begin = (stages: { slug: string; source: 'problem' | 'question' }[], start: () => void) => {
     if (stages.length === 0) return
@@ -185,7 +198,11 @@ export function SessionPicker({ catalogue }: { catalogue: CatalogueEntry[] }) {
                       const fresh = buildSession(template, catalogue)
                       begin(fresh.stages, () => startSession(fresh))
                     }}
-                    className="mt-3 rounded-md bg-accent px-3.5 py-1.5 text-[12px] font-medium text-surface-0 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                    // Nine buttons on this screen whose accessible name was
+                    // exactly "Start" — unusable from a screen reader's element
+                    // list, where the surrounding card is not read.
+                    aria-label={`Start ${template.name}`}
+                    className="mt-3 rounded-md bg-accent px-3.5 py-2 text-[12px] font-medium text-surface-0 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     Start
                   </button>
@@ -243,6 +260,23 @@ export function SessionPicker({ catalogue }: { catalogue: CatalogueEntry[] }) {
                         <span className="min-w-0 flex-1 truncate text-[13px] text-ink-0">
                           {entry.title}
                         </span>
+                        {/*
+                          What happened last time, from the history you already
+                          keep. Without it the picker cannot answer the question
+                          you actually arrive with — "which of these have I not
+                          done, and which did I do badly?" — while the data to
+                          answer it sits one page away.
+                        */}
+                        {lastOutcome[entry.slug] && (
+                          <span
+                            className={`shrink-0 rounded border px-1.5 py-px text-[9.5px] uppercase tracking-wide ${
+                              ATTEMPT_STYLE[lastOutcome[entry.slug]]
+                            }`}
+                            title={`Last attempt: ${lastOutcome[entry.slug]}`}
+                          >
+                            {lastOutcome[entry.slug] === 'solved' ? 'done' : lastOutcome[entry.slug]}
+                          </span>
+                        )}
                         <span className="shrink-0 text-[10.5px] text-ink-2">{entryTag(entry)}</span>
                         <span
                           className={`shrink-0 text-[10.5px] uppercase ${DIFFICULTY_COLOR[entry.difficulty]}`}
@@ -257,7 +291,11 @@ export function SessionPicker({ catalogue }: { catalogue: CatalogueEntry[] }) {
             </section>
           ))}
 
-          <div className="sticky bottom-4 flex items-center gap-3 rounded-lg border border-surface-3 bg-surface-2 px-4 py-3">
+          {/*
+            The bar floats over the list, so without trailing room it sat on top
+            of the last two rows permanently — the two you can never scroll to.
+          */}
+          <div className="sticky bottom-4 mt-4 flex items-center gap-3 rounded-lg border border-surface-3 bg-surface-2 px-4 py-3">
             <span className="text-[12px] text-ink-1">
               {picked.length === 0
                 ? 'Nothing selected yet'

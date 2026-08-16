@@ -68,7 +68,25 @@ function writeCached(recordId: string, report: Report): void {
 
 /* --------------------------------------------------------------- fragments */
 
-function Score({ axis, label }: { axis: AxisVerdict; label: string }) {
+/**
+ * One colour per axis, everywhere.
+ *
+ * Both axes used to render in the accent, so telling a 4 from a 2 meant counting
+ * dots — on the one comparison the whole report exists to make. The progress
+ * page's chart already used accent for content and warn for delivery; the rows
+ * under it did not. Now everything agrees.
+ */
+export const AXIS_COLOR = { content: 'bg-accent', delivery: 'bg-warn' } as const
+
+function Score({
+  axis,
+  axisName,
+  label,
+}: {
+  axis: AxisVerdict
+  axisName: 'content' | 'delivery'
+  label: string
+}) {
   return (
     <div className="flex-1 rounded-md border border-surface-3 bg-surface-1 px-3.5 py-3">
       <div className="mb-1.5 flex items-baseline gap-2">
@@ -77,7 +95,9 @@ function Score({ axis, label }: { axis: AxisVerdict; label: string }) {
           {[1, 2, 3, 4, 5].map((n) => (
             <span
               key={n}
-              className={`size-1.5 rounded-full ${n <= axis.score ? 'bg-accent' : 'bg-surface-3'}`}
+              className={`size-1.5 rounded-full ${
+                n <= axis.score ? AXIS_COLOR[axisName] : 'bg-surface-3'
+              }`}
             />
           ))}
         </span>
@@ -118,9 +138,9 @@ function Round({ round }: { round: RoundVerdict }) {
       </header>
 
       <div className="mb-4 flex flex-wrap gap-3">
-        <Score axis={round.content} label="Content — what you knew" />
+        <Score axis={round.content} axisName="content" label="Content — what you knew" />
         {round.delivery ? (
-          <Score axis={round.delivery} label="Delivery — how it landed" />
+          <Score axis={round.delivery} axisName="delivery" label="Delivery — how it landed" />
         ) : (
           <div className="flex-1 rounded-md border border-dashed border-surface-3 px-3.5 py-3">
             <div className="mb-1.5 text-[10px] uppercase tracking-wider text-ink-2">
@@ -387,6 +407,41 @@ export function ReportView() {
                 </div>
               </section>
             )}
+
+            {/*
+              Somewhere to go from here.
+
+              The report used to stop dead after "Practise next" — at the exact
+              moment you have just been told what to work on and have to decide
+              what to do about it. Retrying the round you did worst is one click
+              from that sentence now.
+            */}
+            <section className="flex flex-wrap items-center gap-2 border-t border-surface-3 py-6">
+              <span className="mr-1 text-[11px] uppercase tracking-wider text-ink-2">
+                Go again
+              </span>
+              {report.rounds.map((round) => (
+                <Link
+                  key={round.slug}
+                  // The evidence record is the only thing that knows whether a
+                  // round was spoken or coded; the report itself does not carry it.
+                  href={
+                    record?.rounds.find((r) => r.slug === round.slug)?.source === 'question'
+                      ? `/question/${round.slug}`
+                      : `/interview/${round.slug}`
+                  }
+                  className="rounded border border-surface-3 px-2.5 py-1 text-[11.5px] text-ink-1 transition-colors hover:border-accent-dim hover:text-accent"
+                >
+                  {round.title}
+                </Link>
+              ))}
+              <Link
+                href="/history"
+                className="ml-auto rounded border border-surface-3 px-2.5 py-1 text-[11.5px] text-ink-2 transition-colors hover:border-accent-dim hover:text-accent"
+              >
+                See progress over time →
+              </Link>
+            </section>
           </>
         )}
       </main>

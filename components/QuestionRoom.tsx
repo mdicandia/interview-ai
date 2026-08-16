@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { ClientQuestion } from '@/questions'
-import { DISCUSSION_FORMAT_LABELS } from '@/lib/problems/types'
+import { DIFFICULTY_COLOR, DISCUSSION_FORMAT_LABELS } from '@/lib/problems/types'
 import type { Observation, RoundOutcome, TranscriptLine } from '@/lib/client/voice'
 import { useSession } from '@/lib/session/store'
 import {
@@ -137,7 +137,7 @@ export function QuestionRoom({ question }: { question: ClientQuestion }) {
           <span className="shrink-0 rounded border border-accent-dim px-1.5 py-px text-[10px] uppercase tracking-wide text-accent">
             {DISCUSSION_FORMAT_LABELS[question.format]}
           </span>
-          <span className="shrink-0 text-[11px] uppercase tracking-wide text-ink-2">
+          <span className={`shrink-0 text-[11px] uppercase tracking-wide ${DIFFICULTY_COLOR[question.difficulty]}`}>
             {question.difficulty}
           </span>
         </div>
@@ -152,7 +152,7 @@ export function QuestionRoom({ question }: { question: ClientQuestion }) {
             files.length > 0 ? 'w-[42%] min-w-[320px] max-w-[620px] shrink-0 border-r border-surface-3' : 'flex-1'
           }`}
         >
-          <div className="mb-3 flex flex-wrap gap-1.5">
+          <div className="mb-3 flex max-w-[70ch] flex-wrap gap-1.5">
             {question.topics.map((topic) => (
               <span
                 key={topic}
@@ -163,7 +163,12 @@ export function QuestionRoom({ question }: { question: ClientQuestion }) {
             ))}
           </div>
 
-          <div className="prose-statement mb-5 text-[13px]">
+          {/*
+            Capped, because with no code panel this column takes the whole
+            viewport and the prose ran to about 150 characters a line — roughly
+            twice a comfortable measure, and worse in a second language.
+          */}
+          <div className="prose-statement mb-5 max-w-[70ch] text-[13px]">
             <ReactMarkdown>{question.statement}</ReactMarkdown>
           </div>
 
@@ -171,10 +176,10 @@ export function QuestionRoom({ question }: { question: ClientQuestion }) {
             <div className="mb-1.5 text-[10px] uppercase tracking-wider text-accent">
               The question
             </div>
-            <p className="text-[14px] leading-relaxed text-ink-0">{question.prompt}</p>
+            <p className="max-w-[70ch] text-[14px] leading-relaxed text-ink-0">{question.prompt}</p>
           </div>
 
-          <p className="mt-4 text-[12px] leading-relaxed text-ink-2">
+          <p className="mt-4 max-w-[70ch] text-[12px] leading-relaxed text-ink-2">
             Press Start interview and answer out loud. It asks the question, then waits —
             the silence after it is yours, not a prompt to fill. The report afterwards
             scores what you covered separately from how you put it.

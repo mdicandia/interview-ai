@@ -392,3 +392,15 @@ export const WORKSPACE_RUBRIC: Record<WorkspaceVariant, Rubric> = {
     ],
   },
 }
+
+/**
+ * How each difficulty is tinted, shared so the picker and the rooms agree.
+ *
+ * It was defined privately in the picker and the rooms rendered flat grey, so
+ * the same fact wore different clothes on different screens.
+ */
+export const DIFFICULTY_COLOR: Record<Difficulty, string> = {
+  easy: 'text-pass',
+  medium: 'text-warn',
+  hard: 'text-fail',
+}

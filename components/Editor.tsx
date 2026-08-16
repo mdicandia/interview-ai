@@ -153,11 +153,34 @@ export function Editor({
         EditorView.updateListener.of((update) => {
           if (update.docChanged) onChangeRef.current(update.state.doc.toString())
         }),
+        /*
+          Long lines wrap instead of running off the edge.
+
+          The editor pane is often under 800px with the statement beside it, and
+          a horizontally scrolled line cut `export function Autocomplete({ … }: Au`
+          mid-identifier — you cannot read a signature you have to scroll to.
+        */
+        EditorView.lineWrapping,
+        /*
+          On the app's own surfaces rather than One Dark's.
+
+          `oneDark` paints #282c34, against panels at #121519 and a page at
+          #0b0d10 — three different darks, with the odd one out being the largest
+          surface on screen. Only the chrome is retinted; the syntax colours are
+          left alone, since those are the part that has to stay legible.
+        */
         EditorView.theme({
-          '&': { height: '100%', fontSize: '13.5px' },
+          '&': { height: '100%', fontSize: '13.5px', backgroundColor: 'var(--color-surface-1)' },
           '.cm-scroller': { fontFamily: 'var(--font-mono)', lineHeight: '1.65' },
           '&.cm-focused': { outline: 'none' },
-          '.cm-gutters': { border: 'none' },
+          '.cm-gutters': {
+            border: 'none',
+            backgroundColor: 'var(--color-surface-1)',
+            color: 'var(--color-ink-2)',
+          },
+          '.cm-activeLine': { backgroundColor: 'var(--color-surface-2)' },
+          '.cm-activeLineGutter': { backgroundColor: 'var(--color-surface-2)' },
+          '.cm-content': { caretColor: 'var(--color-accent)' },
         }),
       ],
     })

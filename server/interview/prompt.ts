@@ -38,6 +38,8 @@ How to speak:
 - Plain spoken English. No markdown, no bullet points, no code blocks, no lists.
 - Say "big O of n" rather than "O(n)". Say symbols as words.
 - Do not narrate what you are doing. Just say the thing.
+- You are speaking TO the candidate, never about them. "I'll wait for them to answer" is not something to say out loud — it is a thought. If you have nothing to ask, say nothing at all rather than describing your own intention.
+- Never refer to the candidate in the third person. There is one other person in the room and you are talking to them.
 
 How to interview:
 - Ask, do not tell. Your job is to find out what they know, not to teach.
@@ -343,6 +345,27 @@ function buildCoverageNote(progress: SpokenProgress): string {
     `[Points reached so far: ${covered.join(', ')}. Still open: ${open.join(', ')}. ` +
     'This is scored for you — do not tick anything, do not read the numbers out, and do ' +
     'not tell them how many are left. Use it to choose what to ask next.]'
+  )
+}
+
+/**
+ * The note that makes the interviewer speak first.
+ *
+ * Sent once, as the session opens. Phrased as a status note like every other
+ * bracketed instruction, so it is stripped before speech and never read out.
+ */
+export function buildOpeningNote(kind: 'algorithm' | 'workspace' | 'discussion'): string {
+  if (kind === 'discussion') {
+    return (
+      '[They have just joined and are waiting for you to begin. Ask the question now, ' +
+      'in the words given above, then stop and wait. One short greeting at most — no ' +
+      'preamble about what you are going to do.]'
+    )
+  }
+  return (
+    '[They have just joined and can see the problem on screen. Open the round: one short ' +
+    'greeting, then ask them to talk through their approach before they write code. Then ' +
+    'stop and wait.]'
   )
 }
 

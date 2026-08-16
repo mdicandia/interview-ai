@@ -13,7 +13,13 @@
 
   --color-ink-0: #e8eaed; /* primary text */
   --color-ink-1: #a8b0bb; /* secondary text */
-  --color-ink-2: #6b7482; /* muted / metadata */
+  /*
+   * Muted / metadata. Raised from #6b7482, which measured 3.91:1 on surface-1
+   * and failed WCAG AA — while being the colour of nearly every 10–12px label
+   * in the app. Forty-five minutes of squinting at your own progress data is
+   * friction the tool has no business adding.
+   */
+  --color-ink-2: #838d9c; /* measured 5.45:1 on surface-1, 5.04:1 on surface-2 */
 
   --color-accent: #5b9dff;
   --color-accent-dim: #2f4d80;
@@ -75,19 +81,44 @@ body {
   padding: 0.1em 0.35em;
   color: var(--color-ink-0);
 }
+/*
+ * Reclaims the column's own padding.
+ *
+ * A worked example is the widest thing in a statement and the least tolerant of
+ * being cut, since the part that falls off the right is the explanation after
+ * the arrow. Bleeding to the edges buys back ~32px without shrinking the type
+ * further or taking width from the editor.
+ */
 .prose-statement pre {
   background: var(--color-surface-0);
   border: 1px solid var(--color-surface-3);
   border-radius: 8px;
-  padding: 0.85rem 1rem;
+  padding: 0.85rem 0.9rem;
+  margin-left: -1rem;
+  margin-right: -1rem;
   overflow-x: auto;
 }
+/*
+ * Sized so a worked example fits the statement column.
+ *
+ * At 0.82rem the hard problem's examples overflowed by 61px — and since the
+ * scrollbar track is transparent, nothing said so. The part that fell off the
+ * right was the explanation after each arrow, which is the half that teaches.
+ */
 .prose-statement pre code {
   background: none;
   border: none;
   padding: 0;
-  font-size: 0.82rem;
+  font-size: 0.76rem;
   line-height: 1.6;
+}
+/* A visible edge when a block really does overflow, rather than a silent clip. */
+.prose-statement pre::-webkit-scrollbar {
+  height: 6px;
+}
+.prose-statement pre::-webkit-scrollbar-thumb {
+  background: var(--color-surface-3);
+  border-radius: 3px;
 }
 .prose-statement ul {
   list-style: disc;
@@ -155,4 +186,36 @@ body {
   .animate-round-enter {
     animation: none;
   }
+}
+
+/*
+ * A focus ring the app actually authored.
+ *
+ * The browser default was carrying every keyboard path, and on the 10.5px tab
+ * strip and the 6px stage pips it was nearly invisible — which made the whole
+ * app effectively mouse-only for anyone tabbing through it. `:focus-visible`
+ * rather than `:focus`, so a mouse click never draws one.
+ */
+:where(a, button, [role='button'], input, select, textarea, summary):focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/*
+ * Announced to a screen reader without being shown twice.
+ *
+ * Turn changes, test results and connection errors were visible and silent —
+ * there was not one live region in the app.
+ */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }

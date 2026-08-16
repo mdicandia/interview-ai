@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { ClientProblem } from '@/problems'
 import {
+  DIFFICULTY_COLOR,
   LANGUAGE_LABELS,
   VARIANT_LABELS,
   supportedLanguages,
@@ -30,7 +31,16 @@ import { clearDraft, readDraft, writeDraft } from '@/lib/session/drafts'
 import { Editor } from './Editor'
 import { SolutionPanel } from './SolutionPanel'
 import { SessionBar } from './SessionBar'
-import { VoicePanel } from './VoicePanel'
+import { TURN_COLOR, VoicePanel } from './VoicePanel'
+import type { TurnState } from '@/server/protocol'
+
+/** The same four turn states as the dot, as a border on the editor pane. */
+const TURN_BORDER: Record<TurnState, string> = {
+  idle: 'border-l-ink-2/40',
+  listening: 'border-l-pass',
+  thinking: 'border-l-warn',
+  speaking: 'border-l-accent',
+}
 import { HintPanel, type Hint } from './HintPanel'
 import { TestPanel } from './TestPanel'
 
@@ -120,8 +130,20 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
     restore()
   }, [problem])
 
-  /** Set briefly by Cmd-S, purely so the reflex gets an acknowledgement. */
+  /**
+   * Set briefly by Cmd-S, purely so the reflex gets an acknowledgement.
+   *
+   * "Briefly" was aspirational: nothing ever cleared it, so the word appeared
+   * once and stayed for the rest of the round — which meant the *second* Cmd-S
+   * produced no visible change at all, and the reflex went unanswered exactly
+   * when it mattered.
+   */
   const [savedAt, setSavedAt] = useState<number | null>(null)
+  useEffect(() => {
+    if (savedAt === null) return
+    const timer = setTimeout(() => setSavedAt(null), 1600)
+    return () => clearTimeout(timer)
+  }, [savedAt])
 
   const files = useMemo(() => initialFiles(problem, language), [problem, language])
   const firstEditable = files.find((f) => !f.readOnly)?.path ?? files[0].path
@@ -153,6 +175,73 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
   // Held so a finished test run can be reported to the interviewer, which is
   // what lets it say "that one's still failing" instead of waiting to be told.
   const voiceRef = useRef<VoiceClient | null>(null)
+  /** Whose turn it is, mirrored out of VoicePanel so it survives a tab switch. */
+  const [voiceTurn, setVoiceTurn] = useState<TurnState | null>(null)
+
+  /**
+   * How much of the column the results row takes, as a percentage.
+   *
+   * Persisted per problem: a frontend build wants a large preview and a bug
+   * squash wants a large editor, and choosing once per problem is less annoying
+   * than choosing once per session.
+   */
+  const resultsRef = useRef<HTMLDivElement>(null)
+  const splitKey = `interview-ai:split:${problem.slug}`
+
+  /*
+   * Written straight to the node rather than held in React state.
+   *
+   * A drag produces a hundred updates a second, and none of them is information
+   * any other component needs — routing them through state would re-render the
+   * editor on every frame. Reading the stored value in a `useState` initialiser
+   * is not an option either: there is no localStorage on the server, so the
+   * first paint would disagree with the markup.
+   */
+  const applySplit = useCallback((pct: number) => {
+    const clamped = Math.max(12, Math.min(70, pct))
+    if (resultsRef.current) resultsRef.current.style.height = `${clamped}%`
+    return clamped
+  }, [])
+
+  useEffect(() => {
+    const stored = Number(window.localStorage.getItem(splitKey))
+    applySplit(Number.isFinite(stored) && stored > 0 ? stored : 34)
+  }, [splitKey, applySplit])
+
+  /**
+   * Drag the seam. Listeners go on the window, not the handle, because the
+   * pointer routinely leaves a 6px target mid-drag and the drag must not stop.
+   */
+  const beginResize = useCallback(
+    (event: React.PointerEvent) => {
+      event.preventDefault()
+      const column = event.currentTarget.parentElement
+      if (!column) return
+      let latest = 34
+      const move = (e: PointerEvent) => {
+        const box = column.getBoundingClientRect()
+        latest = applySplit(((box.bottom - e.clientY) / box.height) * 100)
+      }
+      const stop = () => {
+        window.removeEventListener('pointermove', move)
+        window.removeEventListener('pointerup', stop)
+        window.localStorage.setItem(splitKey, String(Math.round(latest)))
+      }
+      window.addEventListener('pointermove', move)
+      window.addEventListener('pointerup', stop)
+    },
+    [applySplit, splitKey],
+  )
+
+  /** Same seam, from the keyboard. */
+  const nudgeSplit = useCallback(
+    (delta: number) => {
+      const current = Number.parseFloat(resultsRef.current?.style.height ?? '34') || 34
+      const next = applySplit(current + delta)
+      window.localStorage.setItem(splitKey, String(Math.round(next)))
+    },
+    [applySplit, splitKey],
+  )
 
   const runtimeRef = useRef<RuntimeClient | null>(null)
 
@@ -441,7 +530,9 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
               {VARIANT_LABELS[problem.variant]}
             </span>
           )}
-          <span className="shrink-0 text-[11px] uppercase tracking-wide text-ink-2">
+          {/* Colour-coded in the picker and flat grey here — the same fact
+              wearing two different clothes on two screens. */}
+          <span className={`shrink-0 text-[11px] uppercase tracking-wide ${DIFFICULTY_COLOR[problem.difficulty]}`}>
             {problem.difficulty}
           </span>
         </div>
@@ -516,7 +607,7 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
           </div>
         </section>
 
-        <section className="flex min-w-0 flex-1 flex-col">
+        <section className="relative flex min-w-0 flex-1 flex-col">
           {showTabs && (
             <div
               className="flex shrink-0 items-stretch overflow-x-auto border-b border-surface-3 bg-surface-1"
@@ -537,12 +628,18 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
                   }`}
                 >
                   {file.path}
+                  {/*
+                    A dot after a filename means "unsaved changes" in VS Code and
+                    in every JetBrains IDE. Here it meant the opposite — the file
+                    cannot be changed at all — to an audience whose muscle memory
+                    comes from those editors.
+                  */}
                   {file.readOnly && (
                     <span
-                      className="text-[10px] text-ink-2"
+                      className="rounded border border-surface-3 px-1 text-[9px] uppercase tracking-wide text-ink-2"
                       title="Read-only — the tests are the specification"
                     >
-                      ●
+                      ro
                     </span>
                   )}
                 </button>
@@ -556,7 +653,19 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
             </p>
           )}
 
-          <div className="min-h-0 flex-1 overflow-hidden">
+          {/*
+            The turn colour, where the eyes already are.
+
+            It was an 8px dot in the far corner of a 1280px screen, so in
+            practice nobody knew whose turn it was without looking away from the
+            caret. A tinted edge on the pane you are typing in is read
+            peripherally instead of focally.
+          */}
+          <div
+            className={`min-h-0 flex-1 overflow-hidden border-l-2 transition-colors ${
+              voiceTurn ? TURN_BORDER[voiceTurn] : 'border-l-transparent'
+            }`}
+          >
             <Editor
               key={`${language}:${activeFile.path}`}
               value={code}
@@ -568,7 +677,30 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
               onLint={lint}
             />
           </div>
-          <div className="flex h-[42%] min-h-[180px] shrink-0 overflow-hidden">
+          {/*
+            Draggable, and it starts smaller.
+
+            A fixed 42% left the editor 352px — about nineteen lines — on a
+            720px screen, and on the frontend problem it squeezed the live
+            preview to 236×246 while the statement told you to watch it. Nothing
+            here has a single right size, so the size is yours: drag the seam,
+            and it is remembered per problem.
+          */}
+          <div
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize the results panel"
+            tabIndex={0}
+            onPointerDown={beginResize}
+            onKeyDown={(event) => {
+              if (event.key === 'ArrowUp') nudgeSplit(4)
+              else if (event.key === 'ArrowDown') nudgeSplit(-4)
+              else return
+              event.preventDefault()
+            }}
+            className="h-1.5 shrink-0 cursor-row-resize border-t border-surface-3 bg-surface-2 transition-colors hover:bg-accent-dim"
+          />
+          <div ref={resultsRef} className="flex h-[34%] shrink-0 overflow-hidden">
             {isFrontend && (
               <div className="flex min-w-0 flex-1 flex-col border-r border-t border-surface-3">
                 <div className="flex items-center gap-2 border-b border-surface-3 bg-surface-1 px-3 py-2">
@@ -603,13 +735,26 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
                     key={tab}
                     type="button"
                     onClick={() => setAssistTab(tab)}
-                    className={`flex-1 px-2 py-1.5 text-[10.5px] uppercase tracking-wider transition-colors ${
+                    className={`flex flex-1 items-center justify-center gap-1.5 px-2 py-1.5 text-[10.5px] uppercase tracking-wider transition-colors ${
                       assistTab === tab
                         ? 'bg-surface-1 text-ink-0'
                         : 'text-ink-2 hover:text-ink-1'
                     }`}
                   >
                     {tab === 'interviewer' ? 'Interviewer' : tab === 'hints' ? 'Hints' : 'Solution'}
+                    {/*
+                      The round carries on behind the other two tabs, and every
+                      sign of it used to be hidden with the panel — including
+                      whose turn it was and that the socket was still open.
+                    */}
+                    {tab === 'interviewer' && voiceTurn && (
+                      <span
+                        aria-label={`Interview live: ${voiceTurn}`}
+                        className={`size-1.5 rounded-full ${TURN_COLOR[voiceTurn]} ${
+                          voiceTurn === 'speaking' || voiceTurn === 'thinking' ? 'animate-pulse' : ''
+                        }`}
+                      />
+                    )}
                   </button>
                 ))}
               </div>
@@ -623,6 +768,7 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
                   clientRef={(client) => { voiceRef.current = client }}
                   onTranscript={onTranscript}
                   onObservations={onObservations}
+                  onTurn={setVoiceTurn}
                 />
               </div>
               <div className={`min-h-0 flex-1 ${assistTab === 'hints' ? '' : 'hidden'}`}>
@@ -633,23 +779,57 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
                   onHint={onHint}
                 />
               </div>
-              {/*
-                Mounted only when opened, unlike the other two. Those hold a
-                socket and a hint history that must survive tab switches; this
-                holds nothing, and not fetching the answer key until it is
-                actually asked for is the point.
-              */}
               {assistTab === 'solution' && (
-                <div className="min-h-0 flex-1">
-                  <SolutionPanel
-                    problemSlug={problem.slug}
-                    language={language}
-                    onRevealed={() => recordSolutionRevealed(meta)}
-                  />
+                <div className="flex min-h-0 flex-1 items-center justify-center px-4 text-center text-[11.5px] leading-relaxed text-ink-2">
+                  Shown over the editor — press Escape or pick another tab to go back.
                 </div>
               )}
             </div>
           </div>
+
+          {/*
+            The solution opens over the editor, not inside the 320px column.
+
+            Rendered into a 320×200 box it was 9.7% of the screen, while the
+            problem statement you have already read kept 486×667. The whole
+            reason to reveal a solution is to sit and read it against what you
+            wrote, and that needs the width the code was written at.
+
+            Mounted only when opened, unlike the other two tabs. Those hold a
+            socket and a hint history that must survive tab switches; this holds
+            nothing, and not fetching the answer key until it is actually asked
+            for is the point.
+          */}
+          {assistTab === 'solution' && (
+            <div
+              className="absolute inset-0 z-10 flex flex-col border-l border-surface-3 bg-surface-0/98"
+              role="dialog"
+              aria-label="Reference solution"
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') setAssistTab('interviewer')
+              }}
+            >
+              <div className="flex shrink-0 items-center gap-2 border-b border-surface-3 bg-surface-2 px-3 py-1.5">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-2">
+                  Reference solution
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setAssistTab('interviewer')}
+                  className="ml-auto rounded border border-surface-3 px-2 py-0.5 text-[11px] text-ink-2 transition-colors hover:text-ink-0"
+                >
+                  Close
+                </button>
+              </div>
+              <div className="min-h-0 flex-1">
+                <SolutionPanel
+                  problemSlug={problem.slug}
+                  language={language}
+                  onRevealed={() => recordSolutionRevealed(meta)}
+                />
+              </div>
+            </div>
+          )}
         </section>
       </main>
     </div>

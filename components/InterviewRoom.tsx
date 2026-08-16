@@ -161,6 +161,12 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
   // microphone, so glancing at a hint would end the interview.
   const [assistTab, setAssistTab] = useState<'interviewer' | 'hints' | 'solution'>('interviewer')
 
+  /** Focused when the solution opens, so Escape reaches its handler. */
+  const solutionRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (assistTab === 'solution') solutionRef.current?.focus()
+  }, [assistTab])
+
   const [summary, setSummary] = useState<RunSummary | null>(null)
   const [streaming, setStreaming] = useState<TestResult[]>([])
   const [running, setRunning] = useState(false)
@@ -802,7 +808,13 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
           */}
           {assistTab === 'solution' && (
             <div
-              className="absolute inset-0 z-10 flex flex-col border-l border-surface-3 bg-surface-0/98"
+              ref={solutionRef}
+              // Focusable and focused on open, or the Escape handler below never
+              // runs: focus stays on the Solution tab button, which is outside
+              // this subtree, so the keydown bubbles somewhere else entirely —
+              // while the placeholder in the column promises Escape works.
+              tabIndex={-1}
+              className="absolute inset-0 z-10 flex flex-col border-l border-surface-3 bg-surface-0/98 outline-none"
               role="dialog"
               aria-label="Reference solution"
               onKeyDown={(event) => {

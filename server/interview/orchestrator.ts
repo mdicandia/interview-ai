@@ -242,8 +242,15 @@ export class InterviewSession {
      * Not on a resume: `rehydrate` has already filled the history, and the round
      * is mid-conversation. Opening again would re-ask a question that was
      * answered twenty minutes ago.
+     *
+     * Started, not awaited. `start()` is the promise the socket handler gates
+     * every other client message on, so awaiting a model call plus speech
+     * synthesis here would queue them behind it — and the message most likely to
+     * arrive during an opening is the candidate pressing Hold to talk to cut it
+     * off, which would then be applied seconds late against a turn that had
+     * already ended. `#respond` handles its own failures.
      */
-    if (this.#history.length === 0) await this.#respond(buildOpeningNote(this.#config.problem.kind))
+    if (this.#history.length === 0) void this.#respond(buildOpeningNote(this.#config.problem.kind))
     else this.#armIdleTimer()
   }
 

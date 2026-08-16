@@ -11,6 +11,7 @@ import {
   type Outcome,
 } from '@/lib/session/history'
 import { formatDuration } from '@/lib/session/store'
+import { AXIS_COLOR } from '@/lib/problems/types'
 
 /**
  * Every attempt, grouped by problem, oldest first.
@@ -64,7 +65,7 @@ function Pips({ score, label }: { score: number; label: 'content' | 'delivery' }
           <span
             key={n}
             className={`size-1 rounded-full ${
-              n <= score ? (label === 'delivery' ? 'bg-warn' : 'bg-accent') : 'bg-surface-3'
+              n <= score ? AXIS_COLOR[label] : 'bg-surface-3'
             }`}
           />
         ))}

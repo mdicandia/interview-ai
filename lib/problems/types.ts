@@ -404,3 +404,13 @@ export const DIFFICULTY_COLOR: Record<Difficulty, string> = {
   medium: 'text-warn',
   hard: 'text-fail',
 }
+
+/**
+ * One colour per rubric axis, for every place either is drawn.
+ *
+ * Lives here rather than beside one of its readers because it has three: the
+ * report's score tiles, the progress chart, and the per-attempt pips. Those last
+ * two are on the same page and disagreed until recently, which is exactly what a
+ * second copy of this mapping would bring back.
+ */
+export const AXIS_COLOR = { content: 'bg-accent', delivery: 'bg-warn' } as const

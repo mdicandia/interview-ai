@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AxisVerdict, DiagnosisKind, Report, RoundVerdict } from '@/server/interview/report'
 import { hasEvidence, sealRecord, useRecord, type SessionRecord } from '@/lib/session/record'
 import { attachScores } from '@/lib/session/history'
+import { AXIS_COLOR } from '@/lib/problems/types'
 
 /**
  * The post-session report.
@@ -67,16 +68,6 @@ function writeCached(recordId: string, report: Report): void {
 }
 
 /* --------------------------------------------------------------- fragments */
-
-/**
- * One colour per axis, everywhere.
- *
- * Both axes used to render in the accent, so telling a 4 from a 2 meant counting
- * dots — on the one comparison the whole report exists to make. The progress
- * page's chart already used accent for content and warn for delivery; the rows
- * under it did not. Now everything agrees.
- */
-export const AXIS_COLOR = { content: 'bg-accent', delivery: 'bg-warn' } as const
 
 function Score({
   axis,

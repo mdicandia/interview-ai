@@ -40,7 +40,17 @@ export interface RunRecord {
 export interface TranscriptLine {
   role: 'candidate' | 'interviewer'
   text: string
+  /** Wall clock when the line arrived. */
   at: number
+  /**
+   * Where the line sat in the audio and how long it took to say, in seconds.
+   *
+   * Optional because only the candidate's own final lines have them, and because
+   * records written before speech timings existed are still in localStorage —
+   * those rounds are unmeasurable rather than zero, and the metrics say so.
+   */
+  start?: number
+  spokenSeconds?: number
 }
 
 export interface HintRecord {

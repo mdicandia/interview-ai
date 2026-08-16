@@ -303,6 +303,112 @@ async function main() {
     check(axisTrend([scored(1, 4, null)]).gap === null, 'and neither is a history with no delivery scores')
   }
 
+  console.log('\nWhat can be counted about how you spoke')
+  {
+    const { speechMetrics, endsOnAnOutcome } = await import('../lib/session/speech')
+
+    /** A candidate line with real speech timings, in seconds. */
+    const spoke = (text: string, start: number, seconds: number) => ({
+      role: 'candidate' as const,
+      text,
+      at: T0 + start * 1000,
+      start,
+      spokenSeconds: seconds,
+    })
+    const asked = (text: string, at: number) => ({
+      role: 'interviewer' as const,
+      text,
+      at: T0 + at * 1000,
+    })
+
+    // The failure the whole metric exists for: a story told entirely in "we".
+    const collective = speechMetrics(
+      [
+        asked('Tell me about a project you are proud of.', 0),
+        spoke('So we built the billing service, and we decided to split it out.', 5, 6),
+        spoke('We shipped it in about a month and we cut the error rate.', 12, 5),
+      ],
+      min(3),
+    )
+    check(
+      collective.agencyRatio === 0,
+      'a story told entirely in "we" scores zero agency',
+      `I×${collective.firstPersonSingular} we×${collective.firstPersonPlural}`,
+    )
+    check(collective.firstPersonPlural === 4, 'and counts every one of them')
+
+    const owned = speechMetrics([spoke('I built it, I shipped it, we reviewed it.', 0, 4)], min(1))
+    check(
+      owned.agencyRatio !== null && owned.agencyRatio > 0.6,
+      'claiming your own work scores high',
+      owned.agencyRatio?.toFixed(2),
+    )
+    // Null, not zero: "never used either" is a different fact from "always said
+    // we", and a zero here would put an honest answer at the bottom of a trend.
+    check(speechMetrics([spoke('The index is a B-tree.', 0, 2)], min(1)).agencyRatio === null,
+      'and saying neither reports nothing rather than zero')
+
+    // 12 words in 30 seconds is 24wpm — slow, and the point is that it is *known*.
+    // The round is five minutes, so that same speech is a tenth of the talk time.
+    const paced = speechMetrics(
+      [spoke('one two three four five six seven eight nine ten eleven twelve', 0, 30)],
+      min(5),
+    )
+    check(paced.words === 12, 'counts words', String(paced.words))
+    check(paced.wordsPerMinute === 24, 'and turns them into a pace', String(paced.wordsPerMinute))
+
+    // Thirty seconds of speech in a five-minute round is six percent.
+    check(
+      paced.talkTimeRatio !== null && Math.abs(paced.talkTimeRatio - 0.1) < 0.001,
+      'talk time is a fraction of the round',
+      paced.talkTimeRatio?.toFixed(3),
+    )
+
+    const withGap = speechMetrics(
+      [spoke('Let me think about this one.', 4, 3), spoke('Right, I have it.', 130, 2)],
+      min(5),
+    )
+    check(
+      withGap.longestSilence !== null && Math.abs(withGap.longestSilence.seconds - 123) < 0.01,
+      'finds the hole where someone went quiet',
+      `${withGap.longestSilence?.seconds.toFixed(0)}s at ${withGap.longestSilence?.atSecond.toFixed(0)}s`,
+    )
+    check(withGap.timeToFirstWord === 4, 'and how long before the first word', String(withGap.timeToFirstWord))
+
+    /*
+     * The clock matters more than it looks.
+     *
+     * `at` is when the transcript *arrived* — after the model ran and after the
+     * endpointing window. A round recorded before speech timings existed has
+     * only that, and reporting a pace from it would be reporting pipeline
+     * latency as if it were the speaker.
+     */
+    const untimed = speechMetrics(
+      [{ role: 'candidate' as const, text: 'said without timings', at: T0 }],
+      min(5),
+    )
+    check(untimed.wordsPerMinute === null, 'an old record is unmeasurable, not zero')
+    check(untimed.talkTimeRatio === null && untimed.longestSilence === null, 'across every timed metric')
+    check(untimed.words === 3, 'while the countable half still counts')
+
+    const hedged = speechMetrics(
+      [spoke('I think maybe it is kind of a hash map, you know, basically.', 0, 60)],
+      min(1),
+    )
+    check(hedged.hedgeCount >= 3, 'counts hedging', `${hedged.hedgeCount} hedges`)
+    check(hedged.fillerCount >= 2, 'and filler', `${hedged.fillerCount} fillers`)
+
+    check(
+      endsOnAnOutcome([spoke('We cut p99 by 40% and it is still running today.', 0, 4)]) === true,
+      'an answer that lands on a number has an ending',
+    )
+    check(
+      endsOnAnOutcome([spoke('So we wrote a document about it and shared the process.', 0, 4)]) === false,
+      'and one that trails off on a document does not',
+    )
+    check(endsOnAnOutcome([asked('anything?', 0)]) === null, 'with nothing said, there is nothing to judge')
+  }
+
   console.log('\nThe evidence record')
   {
     storage.clear()

@@ -8,14 +8,14 @@ import { diagnosisP99Regression, systemDesignUrlShortener } from './scenarios'
 /**
  * The non-coding question bank.
  *
- * Deliberately kept out of `PROBLEMS` and out of the picker. These cannot be
- * practised yet: a verbal answer has no test suite, so the only thing that can
- * judge one is the interviewer, which does not exist. Shipping them into the UI
- * now would mean a screen that shows a question and does nothing.
+ * Deliberately kept out of `PROBLEMS`, because a verbal answer has no test suite
+ * and so cannot share a type with something that does. It is otherwise a
+ * first-class round: it appears in the picker under "Questions (no coding)", the
+ * interviewer asks it out loud, and a separate grader scores what was said
+ * against `expectedPoints`.
  *
- * They are written and verified now because the rubric is the durable artefact —
- * when the interviewer lands it scores against `expectedPoints` directly, with no
- * rewrite of the bank.
+ * That last part is why the rubric was written before any of the machinery
+ * existed — the bank needed no rewrite when the interviewer arrived.
  */
 export const QUESTIONS: readonly DiscussionProblem[] = [
   codeReviewPython,

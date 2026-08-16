@@ -18,7 +18,11 @@ export interface TranscriptLine {
   role: 'candidate' | 'interviewer'
   text: string
   final: boolean
+  /** Wall clock when this line arrived — the pipeline's clock, not the speaker's. */
   at: number
+  /** Position and length in the audio, in seconds. Candidate finals only. */
+  start?: number
+  spokenSeconds?: number
 }
 
 export interface Observation {

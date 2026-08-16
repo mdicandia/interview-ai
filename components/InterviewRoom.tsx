@@ -395,7 +395,13 @@ export function InterviewRoom({ problem }: { problem: ClientProblem }) {
     (lines: TranscriptLine[]) =>
       recordTranscript(
         meta,
-        lines.map(({ role, text, at }) => ({ role, text, at })),
+        lines.map(({ role, text, at, start, spokenSeconds }) => ({
+          role,
+          text,
+          at,
+          start,
+          spokenSeconds,
+        })),
       ),
     [meta],
   )

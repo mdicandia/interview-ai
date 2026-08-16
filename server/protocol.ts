@@ -126,7 +126,23 @@ export type ServerMessage =
    * Transcript line. `final: false` lines are interim guesses that will be
    * replaced — useful to show live, useless to act on.
    */
-  | { type: 'transcript'; role: 'candidate' | 'interviewer'; text: string; final: boolean }
+  | {
+      type: 'transcript'
+      role: 'candidate' | 'interviewer'
+      text: string
+      final: boolean
+      /**
+       * Where this sat in the audio, in seconds, and how long it took to say.
+       *
+       * Candidate lines only, and only on final ones. Present so the report can
+       * measure pace and silence against the clock the speaker was actually on:
+       * the wall-clock arrival time of a transcript includes the model's own
+       * latency and the endpointing window, which is a property of the pipeline
+       * rather than of the person.
+       */
+      start?: number
+      spokenSeconds?: number
+    }
   /**
    * Barge-in. The browser must drop every buffered sample immediately.
    *

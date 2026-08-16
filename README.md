@@ -1,36 +1,47 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# interview-ai
 
-## Getting Started
+A local, single-user tool for practising **live coding interviews**: a voice
+interviewer talks to you while you write code in a shared editor, then a report
+afterwards tells you whether the thing holding you back was the knowledge or the
+English.
 
-First, run the development server:
+Everything runs on this machine. Code executes in the browser — Pyodide for
+Python, an esbuild-powered worker for TypeScript, a sandboxed iframe for React —
+and the interviewer's voice is a local 82M model, so an idle session costs
+nothing and there is no meter running.
+
+## Running it
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm install
+pnpm dev     # UI on :3000, voice server on :8787
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Speech needs two keys in `.env.local` — see `.env.example`. Without them the
+editor, the runtimes and the reports all still work; only the talking does not.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+pnpm test    # everything free and deterministic, ~8s
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Where the real documentation is
 
-## Learn More
+**[`AGENTS.md`](AGENTS.md)** — the architecture, and more importantly the seven
+constraints that are easy to re-break by accident. Read it before changing
+anything: several of them look like arbitrary choices and are not.
 
-To learn more about Next.js, take a look at the following resources:
+- **[`BACKLOG.md`](BACKLOG.md)** — what to build next, ranked by what has actually
+  cost an interview rather than by effort.
+- **[`PLAN.md`](PLAN.md)** — how that backlog gets built, in dependency order.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Layout, briefly
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+| Path | What lives there |
+|---|---|
+| `problems/` | Coding problems as typed modules. Answer keys never reach the browser. |
+| `questions/` | The spoken question bank — concepts, trade-offs, code review, system design. |
+| `lib/runtime/` | The worker protocol and the client that supervises execution. |
+| `public/workers/` | The two execution workers. Plain JS on purpose — see constraint 1. |
+| `lib/session/` | Session state, the clock, drafts, history, and the evidence record. |
+| `server/pipeline/` | Speech to text, text to speech, and the language model behind one interface. |
+| `server/interview/` | The prompt builder, the turn state machine, the coverage grader, the report. |

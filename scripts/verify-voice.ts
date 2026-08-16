@@ -212,7 +212,7 @@ async function main() {
     const stt = await createSttClient(deepgramKey, {
       onSpeechStarted: () => { speechStarted = true },
       onInterim: () => {},
-      onFinal: (t) => finals.push(t),
+      onFinal: (chunk) => finals.push(chunk.text),
       onUtteranceEnd: () => { utteranceEnded = true },
       onError: (e) => check(false, 'deepgram stream', e.message),
       onClose: () => { sttClosed = true },

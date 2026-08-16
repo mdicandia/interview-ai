@@ -87,6 +87,16 @@ export class InterviewSession {
   /** Final transcript chunks for the current candidate turn, not yet answered. */
   #pending: string[] = []
 
+  /**
+   * Seconds the candidate has actually been speaking, from Deepgram's clock.
+   *
+   * Distinct from `audioSeconds()`, which counts the microphone being open —
+   * that is the billing number, and with push-to-talk it is also mostly silence.
+   * This is the one that says whether someone talked through the problem or
+   * solved it quietly.
+   */
+  #spokenSeconds = 0
+
   /** Volatile editor state, refreshed by the browser as they type. */
   #volatile: VolatileContext = { files: [], activePath: '' }
 
@@ -211,9 +221,17 @@ export class InterviewSession {
       onSpeechStarted: () => this.#onSpeechStarted(),
       onInterim: (text) =>
         this.#config.send({ type: 'transcript', role: 'candidate', text, final: false }),
-      onFinal: (text) => {
+      onFinal: ({ text, start, spokenSeconds }) => {
         this.#pending.push(text)
-        this.#config.send({ type: 'transcript', role: 'candidate', text, final: true })
+        this.#spokenSeconds += spokenSeconds
+        this.#config.send({
+          type: 'transcript',
+          role: 'candidate',
+          text,
+          final: true,
+          start,
+          spokenSeconds,
+        })
       },
       // Ignored entirely once push-to-talk is in use: the candidate says when
       // they are done, and a pause for thought must not pre-empt them.

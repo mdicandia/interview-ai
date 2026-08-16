@@ -43,8 +43,17 @@ export interface SttEvents {
   onSpeechStarted: () => void
   /** Best-guess text so far. Useful for on-screen feedback, not for decisions. */
   onInterim: (text: string) => void
-  /** A settled chunk of transcript. A turn may contain several. */
-  onFinal: (text: string) => void
+  /**
+   * A settled chunk of transcript. A turn may contain several.
+   *
+   * Carries Deepgram's own timings, and that matters more than it looks. The
+   * wall-clock moment this callback fires is *when the transcript arrived* —
+   * after the model ran and after the endpointing window elapsed. Measuring
+   * speaking pace or the length of a silence from it would be measuring the
+   * pipeline's latency as much as the speaker. `start` and `spokenSeconds` are
+   * positions in the audio, which is the only clock the candidate is actually on.
+   */
+  onFinal: (chunk: { text: string; start: number; spokenSeconds: number }) => void
   /** The candidate has stopped talking; the interviewer may now respond. */
   onUtteranceEnd: () => void
   onError: (error: Error) => void
@@ -70,6 +79,10 @@ export interface SttClient {
 interface DeepgramMessage {
   type?: string
   channel?: { alternatives?: { transcript?: string }[] }
+  /** Seconds into the stream where this chunk of speech begins. */
+  start?: number
+  /** Its length in seconds. */
+  duration?: number
   is_final?: boolean
   speech_final?: boolean
   error?: string
@@ -92,6 +105,18 @@ export async function createSttClient(apiKey: string, events: SttEvents): Promis
     vad_events: 'true',
     punctuate: 'true',
     smart_format: 'true',
+    /*
+     * Keep the "um"s. Deepgram removes them by default.
+     *
+     * A filler rate computed without this measures Deepgram's cleanup policy
+     * rather than the speaker — it would read as zero for everyone, forever, and
+     * look like a metric that worked. Kept alongside `smart_format` because the
+     * two are documented as independent; if a real recording ever shows
+     * formatting eating disfluencies anyway, drop the *metric*, not the
+     * formatting. A readable transcript in the report is worth more than one
+     * more number.
+     */
+    filler_words: 'true',
   })
 
   const socket = new WebSocket(`${DEEPGRAM_WS}?${params}`, {
@@ -155,7 +180,11 @@ export async function createSttClient(apiKey: string, events: SttEvents): Promis
         const text = message.channel?.alternatives?.[0]?.transcript ?? ''
         if (text.trim() === '') break
         if (message.is_final) {
-          events.onFinal(text)
+          events.onFinal({
+            text,
+            start: message.start ?? 0,
+            spokenSeconds: message.duration ?? 0,
+          })
           // `speech_final` means Deepgram's own endpointing decided the speaker
           // stopped. It arrives sooner than UtteranceEnd, so acting on it keeps
           // replies snappy; UtteranceEnd remains the backstop for the case where

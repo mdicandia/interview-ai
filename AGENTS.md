@@ -138,7 +138,16 @@ pnpm verify:voice      # the raw pipeline against Deepgram, Cartesia and DeepSee
   reach the browser. `pnpm verify:bundle` is what keeps that true — it greps the
   built output, including the prerendered HTML and RSC payloads, which is where
   the hint ladder was found shipping in full.
-- `questions/*.ts` — the non-coding question bank (`kind: 'discussion'`).
+- `lib/session/speech.ts` — what can be *counted* about how someone spoke: agency
+  ratio, pace, talk-time, longest silence, hedging, and whether an answer landed
+  on a fact. Pure functions over the timestamped transcript, so `verify:session`
+  covers all of it offline. Note the two clocks: `at` is when a line arrived
+  (model latency included), `start`/`spokenSeconds` are positions in the audio.
+  Anything about pace or silence must use the second pair, and returns null
+  rather than guessing when a round predates them.
+- `questions/*.ts` — the non-coding question bank (`kind: 'discussion'`),
+  including the behavioural canon (`format: 'behavioral'`) — a format rather than
+  a new kind, so it inherits the room, the grader, the record and the report.
   **Deliberately not in `PROBLEMS`** — a question has no test suite, so it cannot
   share a type with something that does. It *is* in the picker, under "Questions
   (no coding)", and playable: the interviewer asks it and the coverage grader

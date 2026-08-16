@@ -1,5 +1,6 @@
 import type { DiscussionProblem } from '@/lib/problems/types'
 import { llmEvalDesign, tradeoffRagVsFinetune } from './ai'
+import { BEHAVIORAL_QUESTIONS } from './behavioral'
 import { codeReviewPython } from './code-review-python'
 import { codeReviewTypescript } from './code-review-typescript'
 import { conceptDatabaseIndex, conceptRequestLifecycle, tradeoffQueueVsDirect } from './concepts'
@@ -27,6 +28,7 @@ export const QUESTIONS: readonly DiscussionProblem[] = [
   systemDesignUrlShortener,
   llmEvalDesign,
   tradeoffRagVsFinetune,
+  ...BEHAVIORAL_QUESTIONS,
 ]
 
 const BY_SLUG = new Map(QUESTIONS.map((q) => [q.slug, q]))

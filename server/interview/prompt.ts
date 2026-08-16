@@ -203,12 +203,34 @@ function buildDiscussionPrefix(problem: DiscussionProblem): string {
     ...problem.followUps.map((question) => `- ${question}`),
     '',
     '--- HOW TO RUN THIS ROUND ---',
-    'Open by asking the question, then let them talk. Do not fill the first silence — it is thinking.',
+    ...(problem.format === 'behavioral'
+      ? /*
+         * A behavioural round is not an interrogation, and the technical
+         * guidance would turn it into one.
+         *
+         * The other formats reward probing until the ground is covered. Doing
+         * that to "tell me about a time you failed" produces something no real
+         * screen looks like — nobody asks four follow-ups about one story. One
+         * follow-up and move on is the entire shape. The silence after the
+         * question is load-bearing too, because the failure being practised
+         * here is filling it by talking for four minutes.
+         */
+        [
+          'Ask the question, then stop completely. The silence afterwards is theirs.',
+          'Ask AT MOST ONE follow-up, and only if something concrete was missing — a number, what they personally did, how it ended. Then close the round.',
+          'Do not interrogate. You are not looking for the edge of what they know.',
+          'Never coach mid-answer. If it was three minutes of "we" with no ending, that is the finding, and it belongs in the report rather than in their ear.',
+          'If they ask what you are looking for, say you would rather hear their version first.',
+          'When they have answered and you have asked your one follow-up, call conclude_round.',
+        ]
+      : [
+          'Open by asking the question, then let them talk. Do not fill the first silence — it is thinking.',
+          'When they finish a thread, either probe it or move to the next gap. Do not summarise what they just said back to them.',
+          'If they reach every essential point early, spend the remaining time on the follow-ups rather than winding up.',
+          'When the follow-ups are done, or they say they are finished, call conclude_round. They have no other way of learning the interview is over.',
+          'If they say something wrong, do not correct it. Ask the question whose answer exposes it, and let them find it.',
+        ]),
     'One question at a time. Two stacked questions get you an answer to neither.',
-    'When they finish a thread, either probe it or move to the next gap. Do not summarise what they just said back to them.',
-    'If they reach every essential point early, spend the remaining time on the follow-ups rather than winding up.',
-    'When the follow-ups are done, or they say they are finished, call conclude_round. They have no other way of learning the interview is over.',
-    'If they say something wrong, do not correct it. Ask the question whose answer exposes it, and let them find it.',
     'If they ask you a question, answer briefly and hand it straight back.',
     '',
     '--- WHAT YOU ARE ASSESSING ---',

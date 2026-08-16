@@ -180,11 +180,73 @@ const indexRound: RoundEvidence = {
   },
 }
 
+/* ------------------------------------------------ round 4: a behavioural answer
+ * Written to fail on all three counted axes at once, because those are the three
+ * the agency feedback actually named:
+ *
+ *   - every clause is "we"; nothing in it is identifiably theirs
+ *   - it runs to about three minutes of speech
+ *   - it ends on a document and a feeling rather than on anything that happened
+ *
+ * The content is fine — it is a real project with real detail. That is the point:
+ * a report that scores this well on delivery has collapsed the two axes back into
+ * one, which is the failure this whole rubric exists to prevent.
+ */
+const behavioralRound: RoundEvidence = {
+  slug: 'behavioral-failure',
+  title: 'A project of yours that failed',
+  label: 'Behavioural',
+  language: null,
+  enteredAt: min(62),
+  elapsedMs: 5 * 60_000,
+  allottedMs: 6 * 60_000,
+  transcript: [
+    {
+      role: 'interviewer',
+      text: 'Tell me about a project of yours that failed.',
+      at: min(62.2),
+    },
+    {
+      role: 'candidate',
+      text: 'So we had this feature called contract modelling, and we spent about four months on it. We designed it as a stepper flow where users upload a contract and then we let them choose which rates to apply.',
+      at: min(63),
+      start: 8,
+      spokenSeconds: 46,
+    },
+    {
+      role: 'candidate',
+      text: 'The problem we had was the number of states. We kept adding branches and we did not really handle going backwards, and we found that editing an earlier step was quite buggy, so we ended up with something that was confusing for the users and we got quite a lot of complaints about it internally.',
+      at: min(64),
+      start: 56,
+      spokenSeconds: 62,
+    },
+    {
+      role: 'candidate',
+      text: 'We could see it was getting complicated while we were building it but we kept going because we were committed to the deadline, and in hindsight we should have stopped and asked for more UX involvement at that point.',
+      at: min(65),
+      start: 120,
+      spokenSeconds: 40,
+    },
+    {
+      role: 'candidate',
+      text: 'So afterwards we wrote up a retrospective document about state complexity and we shared it with the team, and I think it was a really valuable learning experience for all of us.',
+      at: min(66),
+      start: 163,
+      spokenSeconds: 34,
+    },
+  ],
+  hints: [],
+  runs: [],
+  files: [],
+  objectives: { covered: 2, total: 5, essential: 4, indices: [1, 3] },
+  concluded: { verdict: 'mixed', summary: 'A real failure, told without ever saying what he did.' },
+}
+
 async function main() {
   const key = process.env.DEEPSEEK_API_KEY
   if (!key) throw new Error('DEEPSEEK_API_KEY is not set — add it to .env.local')
 
-  const rounds = [retryRound, twoSumRound, indexRound].map((evidence) => {
+  const rounds = [retryRound, twoSumRound, indexRound, behavioralRound].map((evidence) => {
     const problem = getProblem(evidence.slug) ?? getQuestion(evidence.slug)
     if (!problem) throw new Error(`No such problem: ${evidence.slug}`)
     return { evidence, problem }
@@ -231,6 +293,48 @@ async function main() {
   const twoSum = report.rounds.find((r) => r.slug === 'two-sum')
 
   const spoken = report.rounds.find((r) => r.slug === 'concept-database-index')
+  const behavioral = report.rounds.find((r) => r.slug === 'behavioral-failure')
+
+  if (!behavioral) problems.push('behavioral round is missing entirely')
+
+  if (behavioral) {
+    /*
+     * The three counted axes, all deliberately failed, and all three named in the
+     * agency feedback that motivated this round existing at all.
+     *
+     * The content of the story is fine — real project, real detail. A report that
+     * scores delivery well here has collapsed the two axes back into one.
+     */
+    const text = [
+      behavioral.delivery?.comment ?? '',
+      behavioral.diagnosis ?? '',
+      ...behavioral.doDifferently,
+    ]
+      .join(' ')
+      .toLowerCase()
+
+    if (!behavioral.delivery) {
+      problems.push('behavioral round was not scored on delivery, though it was all speech')
+    } else if (behavioral.delivery.score > 3) {
+      problems.push(
+        `behavioral delivery scored ${behavioral.delivery.score}/5 on an answer that is ` +
+          'entirely "we", three minutes long, and ends on a document.',
+      )
+    }
+
+    if (!/\bwe\b|first person|agency|own contribution|\byou did\b|claim/.test(text)) {
+      problems.push(
+        'behavioral round never mentions that the whole answer is in the first person ' +
+          'plural — the counted metric was handed to it directly.',
+      )
+    }
+    if (!/end|outcome|trail|number|concrete|what changed|landed/.test(text)) {
+      problems.push('behavioral round never mentions that the answer has no ending.')
+    }
+    if (!/long|length|minutes|shorter|concise|cut/.test(text)) {
+      problems.push('behavioral round never mentions the length.')
+    }
+  }
 
   if (!retry) problems.push('flaky-retry round is missing entirely')
   if (!twoSum) problems.push('two-sum round is missing entirely')
@@ -347,7 +451,12 @@ async function main() {
 
   // Every round, or the checker reports a real quote as fabricated the moment a
   // round is added — which is exactly what it did.
-  const said = [...retryRound.transcript, ...twoSumRound.transcript, ...indexRound.transcript]
+  const said = [
+    ...retryRound.transcript,
+    ...twoSumRound.transcript,
+    ...indexRound.transcript,
+    ...behavioralRound.transcript,
+  ]
     .map((line) => normalise(line.text))
     .join(' ')
 

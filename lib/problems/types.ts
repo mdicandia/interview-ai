@@ -204,6 +204,20 @@ export type DiscussionFormat =
   | 'trade-off'
   | 'diagnosis'
   | 'system-design'
+  /**
+   * The non-technical half of a loop: tell me about a time you…
+   *
+   * A format rather than a new `kind`, because structurally it *is* a discussion
+   * question — a prompt, expected substance, no code, no test suite. Making it a
+   * kind would have duplicated the room, the voice pipeline, the grader, the
+   * record and the report to change one rubric.
+   *
+   * What genuinely differs is that much of what makes a behavioural answer good
+   * is countable rather than judged — whether you claimed your own work, whether
+   * you stopped inside two minutes, whether the last sentence landed on a fact.
+   * See lib/session/speech.ts.
+   */
+  | 'behavioral'
 
 export interface ExpectedPoint {
   /** What a good answer says, phrased as the point itself rather than a question. */
@@ -241,6 +255,7 @@ export const DISCUSSION_FORMAT_LABELS: Record<DiscussionFormat, string> = {
   'trade-off': 'Trade-off',
   diagnosis: 'Diagnosis',
   'system-design': 'System design',
+  behavioral: 'Behavioural',
 }
 
 export const DISCUSSION_RUBRIC: Record<DiscussionFormat, Rubric> = {
@@ -299,6 +314,28 @@ export const DISCUSSION_RUBRIC: Record<DiscussionFormat, Rubric> = {
       'driving the conversation rather than waiting',
       'structuring the walkthrough',
       'using precise technical terms',
+    ],
+  },
+  /*
+   * Content is the story; delivery is the telling.
+   *
+   * The split matters more here than anywhere else, because a behavioural answer
+   * fails on delivery far more often than on content — the story is usually
+   * fine and the telling is three minutes long, in the first person plural, with
+   * no ending.
+   */
+  behavioral: {
+    content: [
+      'a specific situation rather than a general policy',
+      'their own contribution, named',
+      'a concrete outcome',
+      'what changed permanently as a result',
+    ],
+    delivery: [
+      'claiming the work: "I" where "I" is true',
+      'finishing inside two minutes',
+      'landing on a fact rather than trailing off',
+      'answering the question that was asked',
     ],
   },
 }

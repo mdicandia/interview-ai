@@ -1,5 +1,6 @@
 import type { DiscussionProblem, Language, Problem, Rubric } from '@/lib/problems/types'
 import type { LLMProvider, Message } from '../pipeline/llm'
+import { endsOnAnOutcome, speechMetrics } from '@/lib/session/speech'
 
 /**
  * The post-session report.
@@ -36,7 +37,14 @@ export interface RoundEvidence {
   language: Language | null
   elapsedMs: number
   allottedMs: number
-  transcript: { role: 'candidate' | 'interviewer'; text: string; at: number }[]
+  transcript: {
+    role: 'candidate' | 'interviewer'
+    text: string
+    at: number
+    /** Position and length in the audio. Absent on rounds recorded before it existed. */
+    start?: number
+    spokenSeconds?: number
+  }[]
   hints: { level: number; text: string; at: number }[]
   /** Moments the interviewer flagged live, via `note_observation`. */
   observations?: {
@@ -316,6 +324,72 @@ function coverageLines(problem: DiscussionProblem, evidence: RoundEvidence): str
   return lines
 }
 
+/**
+ * The half of delivery that is counted rather than judged.
+ *
+ * Handed to the model as fact, not as something to form an opinion about. A
+ * language model asked "did they say I or we" will produce a confident
+ * impression; `speechMetrics` produces the number, and on the one axis this whole
+ * tool exists to separate, a number is worth more than an impression.
+ *
+ * Behavioural rounds only for now. The same block belongs on coding rounds — talk
+ * time while solving is the most-repeated live-coding advice there is — but that
+ * is a later phase, and shipping it everywhere before anyone has looked at one
+ * real set of numbers is how a dashboard nobody reads gets built.
+ */
+function spokenMetricLines(evidence: RoundEvidence): string[] {
+  const metrics = speechMetrics(evidence.transcript, evidence.elapsedMs)
+  if (metrics.words === 0) return []
+
+  const lines = [
+    'HOW THEY SPOKE, COUNTED (not your judgement — these are measured):',
+    'Use these as facts. Do not restate a number they contradict, and do not repeat',
+    'the raw figures back at the candidate: say what they mean.',
+  ]
+
+  if (metrics.agencyRatio !== null) {
+    lines.push(
+      `- Agency: ${metrics.firstPersonSingular} first-person singular ("I") against ` +
+        `${metrics.firstPersonPlural} plural ("we"). ` +
+        (metrics.agencyRatio < 0.35
+          ? 'That is a story told mostly in "we" — the single most common reason a good ' +
+            'answer leaves an interviewer unable to say what the candidate did.'
+          : 'They claimed their own work.'),
+    )
+  } else {
+    lines.push('- Agency: they used neither "I" nor "we", which is unusual and worth noting.')
+  }
+
+  if (metrics.spokenSeconds !== null) {
+    lines.push(
+      `- Length: ${Math.round(metrics.spokenSeconds)} seconds of speech. A behavioural ` +
+        'answer wants 60–90; past about 150 an interviewer has stopped listening.',
+    )
+  }
+  if (metrics.wordsPerMinute !== null) {
+    lines.push(`- Pace: ${Math.round(metrics.wordsPerMinute)} words per minute.`)
+  }
+  if (metrics.hedgeCount > 0) {
+    lines.push(
+      `- Hedging: ${metrics.hedgeCount} softeners ("I think", "kind of", "maybe"). These ` +
+        'make a correct answer sound like a guess.',
+    )
+  }
+
+  const ending = endsOnAnOutcome(evidence.transcript)
+  if (ending !== null) {
+    lines.push(
+      ending
+        ? '- Ending: the answer landed on a concrete outcome.'
+        : '- Ending: the answer did NOT land on a concrete outcome — no number, nothing ' +
+          'shipped, no permanent change. It trailed off. This is the most valuable single ' +
+          'thing to tell them, so say it plainly.',
+    )
+  }
+
+  return lines
+}
+
 /** The answer key. Server-side only — this is the whole reason it exists. */
 function answerKey(problem: Problem | DiscussionProblem, language: Language | null): string[] {
   const lines: string[] = []
@@ -383,6 +457,10 @@ function renderRound(
   if (problem.kind === 'discussion') {
     const coverage = coverageLines(problem, evidence)
     if (coverage.length > 0) lines.push('', ...coverage)
+    if (problem.format === 'behavioral') {
+      const counted = spokenMetricLines(evidence)
+      if (counted.length > 0) lines.push('', ...counted)
+    }
   }
 
   /* --- what they wrote ---------------------------------------------------- */

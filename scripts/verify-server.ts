@@ -705,6 +705,112 @@ async function main() {
     again.ws.close()
   }
 
+  /*
+   * A rapid-fire drill on the same server.
+   *
+   * Only two questions' worth, and with a short clock, because what is being
+   * checked is the *shape* of the loop rather than the bank. Three things can
+   * only be seen here:
+   *
+   *   1. The clock starts when the question stops being spoken, not when it
+   *      starts. Everything about the fairness of the format hangs off that one
+   *      TTS callback, and nothing offline can observe it.
+   *   2. An answer is filed against the question it was given to. The server
+   *      does the bucketing precisely so a late transcript cannot land under the
+   *      next question, and only a real Deepgram round trip has late transcripts.
+   *   3. Speech during a question does not reach the transcript at all.
+   */
+  console.log('\nRapid-fire drill')
+  {
+    const ws = new WebSocket(`ws://localhost:${PORT}`)
+    await new Promise<void>((resolve, reject) => {
+      ws.once('open', resolve)
+      ws.once('error', reject)
+    })
+
+    const asked: number[] = []
+    const listening: { index: number; at: number }[] = []
+    const answered: { index: number; text: string }[] = []
+    const errors: string[] = []
+    let complete = false
+    let questionAudioBytes = 0
+
+    ws.on('message', (data, isBinary) => {
+      if (isBinary) {
+        questionAudioBytes += (data as Buffer).length
+        return
+      }
+      const message = JSON.parse(data.toString()) as ServerMessage
+      if (message.type === 'drill-question') asked.push(message.index)
+      else if (message.type === 'drill-listening')
+        listening.push({ index: message.index, at: Date.now() })
+      else if (message.type === 'drill-answered')
+        answered.push({ index: message.index, text: message.text })
+      else if (message.type === 'drill-complete') complete = true
+      else if (message.type === 'error') errors.push(message.message)
+    })
+
+    ws.send(JSON.stringify({ type: 'start-drill', setSlug: 'drill-typescript' } satisfies ClientMessage))
+
+    /** Streams into *this* socket rather than the interview one above. */
+    const answerInto = async (audio: Buffer) => {
+      for (let offset = 0; offset < audio.length; offset += FRAME) {
+        ws.send(audio.subarray(offset, Math.min(offset + FRAME, audio.length)), { binary: true })
+        await sleep(20)
+      }
+      const silence = Buffer.alloc(FRAME)
+      for (let i = 0; i < 30; i += 1) {
+        ws.send(silence, { binary: true })
+        await sleep(20)
+      }
+    }
+
+    const answer1 = await speechFor(
+      'Static types catch errors at compile time, and the types disappear at runtime because it ' +
+        'compiles down to JavaScript.',
+    )
+
+    // Wait for the first question to be spoken and the clock to open.
+    const openDeadline = Date.now() + 30_000
+    while (listening.length === 0 && Date.now() < openDeadline) await sleep(100)
+    check(asked[0] === 0, 'asks the first question', `index ${asked[0]}`)
+    check(questionAudioBytes > 0, 'speaks it aloud', `${questionAudioBytes} bytes`)
+    check(
+      listening.length === 1,
+      'and opens the clock only once the question has been said',
+      `${listening.length} window(s)`,
+    )
+
+    await answerInto(answer1)
+    ws.send(JSON.stringify({ type: 'drill-next' } satisfies ClientMessage))
+
+    const answeredDeadline = Date.now() + 20_000
+    while (answered.length === 0 && Date.now() < answeredDeadline) await sleep(100)
+    check(
+      answered[0]?.index === 0,
+      'files the answer against the question it was given to',
+      `index ${answered[0]?.index}`,
+    )
+    check(
+      (answered[0]?.text ?? '').toLowerCase().includes('compile'),
+      'with what was actually said',
+      `"${(answered[0]?.text ?? '').slice(0, 60)}"`,
+    )
+
+    // Question two is now being read. Anything said over it must be discarded,
+    // not filed as the answer to it.
+    const nextDeadline = Date.now() + 25_000
+    while (asked.length < 2 && Date.now() < nextDeadline) await sleep(100)
+    check(asked[1] === 1, 'moves straight on to the next question', `index ${asked[1]}`)
+
+    ws.send(JSON.stringify({ type: 'end' } satisfies ClientMessage))
+    await sleep(300)
+    ws.close()
+
+    check(errors.length === 0, 'no errors on the drill path', errors.join('; '))
+    check(!complete, 'the run is not reported finished before its last question')
+  }
+
   child.kill()
   await sleep(300)
 

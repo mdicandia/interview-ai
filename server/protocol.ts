@@ -93,6 +93,17 @@ export type ClientMessage =
    * a signal a real interviewer would remember.
    */
   | { type: 'hint-taken'; level: number; text: string }
+  /**
+   * Open a rapid-fire drill instead of an interview. Sent once, before any audio.
+   *
+   * A completely different session on the other end — see
+   * server/interview/drill.ts. No model is in the loop, so there is no history to
+   * resume and no code to send; the only other message a drill ever sends is
+   * `drill-next`.
+   */
+  | { type: 'start-drill'; setSlug: string }
+  /** Done answering; move on without waiting out the clock. */
+  | { type: 'drill-next' }
   /** Close the session. The report is generated separately, over HTTP. */
   | { type: 'end' }
 
@@ -198,6 +209,36 @@ export type ServerMessage =
    * done in silence with no microphone, which is exactly the case a socket-borne
    * report cannot serve, because the socket was never opened.
    */
+  /*
+   * ------------------------------------------------------------ rapid fire
+   *
+   * Three messages for three distinct moments, rather than one carrying a phase.
+   * The gap between them is the whole design: a question takes several seconds to
+   * say, and starting the answer clock while it is still being spoken would hand
+   * back a different amount of time per question depending on how long the
+   * sentence was.
+   */
+  /** Now asking question `index`. The room shows it; the clock has not started. */
+  | { type: 'drill-question'; index: number }
+  /**
+   * The question has been spoken. The clock starts now and the microphone opens.
+   *
+   * `seconds` is the budget, so the browser can run the countdown itself rather
+   * than being ticked at over the wire. The server keeps its own timer and is the
+   * one that ends the window — a paused or throttled tab must not buy time.
+   */
+  | { type: 'drill-listening'; index: number; seconds: number }
+  /**
+   * The window for `index` has closed, with everything that was said in it.
+   *
+   * The server does the bucketing rather than the browser, because a final
+   * transcript can land a moment after the clock runs out, and a browser
+   * bucketing by "whichever question is on screen" would file it under the next
+   * one.
+   */
+  | { type: 'drill-answered'; index: number; text: string; spokenSeconds: number }
+  /** Every question has been asked. Grading is a separate POST. */
+  | { type: 'drill-complete' }
   | { type: 'error'; message: string; fatal: boolean }
 
 /** Type guards, so the socket handlers don't hand-roll `in` checks. */

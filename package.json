@@ -20,7 +20,8 @@
     "gen:backchannels": "node --env-file=.env.local --import tsx scripts/gen-backchannels.ts",
     "verify:grader": "node --env-file-if-exists=.env.local --import tsx scripts/verify-grader.ts",
     "verify:session": "tsx scripts/verify-session.ts",
-    "test": "pnpm typecheck && pnpm lint && pnpm verify:session && pnpm verify:tools && pnpm verify:problems && SKIP_LIVE=1 pnpm verify:grader",
+    "verify:drill": "node --env-file-if-exists=.env.local --import tsx scripts/verify-drill.ts",
+    "test": "pnpm typecheck && pnpm lint && pnpm verify:session && pnpm verify:tools && pnpm verify:problems && SKIP_LIVE=1 pnpm verify:grader && SKIP_LIVE=1 pnpm verify:drill",
     "verify:bundle": "tsx scripts/verify-bundle.ts"
   },
   "dependencies": {

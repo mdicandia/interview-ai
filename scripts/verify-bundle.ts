@@ -33,6 +33,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { PROBLEMS } from '../problems'
 import { QUESTIONS } from '../questions'
+import { RAPID_FIRE_SETS } from '../questions/canon'
 
 const GREEN = '\x1b[32m'
 const RED = '\x1b[31m'
@@ -125,6 +126,24 @@ function collectSecrets(): Secret[] {
     for (const probe of question.hintLadder) {
       const n = needle(probe)
       if (n) secrets.push({ source: question.slug, kind: 'probe', needle: n })
+    }
+  }
+
+  /*
+   * The drill banks, where a leak would matter most.
+   *
+   * A discussion round runs twenty minutes and its answer key still leaves you
+   * having to say the thing convincingly. A rapid-fire question is sixty seconds
+   * and its key is two or three sentences that answer it outright — so if any
+   * bank's points ever reach a served file, reading them from the network tab
+   * is the whole exercise.
+   */
+  for (const set of RAPID_FIRE_SETS) {
+    for (const question of set.questions) {
+      for (const point of question.expectedPoints) {
+        const n = needle(point)
+        if (n) secrets.push({ source: `${set.slug}/${question.id}`, kind: 'drill point', needle: n })
+      }
     }
   }
 

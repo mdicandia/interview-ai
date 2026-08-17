@@ -1,8 +1,10 @@
 import { WebSocketServer, type WebSocket } from 'ws'
 import { getProblem } from '@/problems'
 import { getQuestion } from '@/questions'
+import { getRapidFireSet } from '@/questions/canon'
 import { createDeepSeekProvider } from './pipeline/llm'
 import { selectedTtsProvider, warmVoice } from './pipeline/voice'
+import { DrillSession } from './interview/drill'
 import { InterviewSession } from './interview/orchestrator'
 import { isClientMessage, type ClientMessage, type ServerMessage } from './protocol'
 
@@ -53,6 +55,12 @@ warmVoice()
 
 server.on('connection', (socket: WebSocket) => {
   let session: InterviewSession | null = null
+  /**
+   * A rapid-fire drill, which is a different session entirely — see
+   * interview/drill.ts. Only one of the two is ever non-null: a socket carries
+   * one round, and which kind it is was decided by the first message.
+   */
+  let drill: DrillSession | null = null
 
   /**
    * Resolves once `start` has finished. Every other message waits on it.
@@ -84,6 +92,7 @@ server.on('connection', (socket: WebSocket) => {
     // See server/protocol.ts for why the split works this way.
     if (isBinary) {
       session?.pushAudio(data as Buffer)
+      drill?.pushAudio(data as Buffer)
       return
     }
 
@@ -101,7 +110,7 @@ server.on('connection', (socket: WebSocket) => {
 
   async function handle(message: ClientMessage) {
     // Anything that touches the session must wait for it to exist.
-    if (message.type !== 'start') await started
+    if (message.type !== 'start' && message.type !== 'start-drill') await started
 
     switch (message.type) {
       case 'start': {
@@ -147,6 +156,36 @@ server.on('connection', (socket: WebSocket) => {
         break
       }
 
+      case 'start-drill': {
+        if (session || drill) return
+        const set = getRapidFireSet(message.setSlug)
+        if (!set) {
+          fail(`Unknown drill: ${message.setSlug}`)
+          return
+        }
+
+        let markStarted: () => void
+        started = new Promise<void>((resolve) => {
+          markStarted = resolve
+        })
+
+        try {
+          drill = new DrillSession({ set, deepgramKey, cartesiaKey, send, sendAudio })
+          await drill.start()
+          console.log(`[voice] drill started: ${set.slug} (${set.questions.length} questions)`)
+        } catch (error) {
+          drill = null
+          fail(error instanceof Error ? error.message : String(error))
+        } finally {
+          markStarted!()
+        }
+        break
+      }
+
+      case 'drill-next':
+        drill?.next()
+        break
+
       case 'code':
         session?.updateCode(message.files, message.activePath)
         break
@@ -175,7 +214,9 @@ server.on('connection', (socket: WebSocket) => {
       case 'end':
         reportUsage()
         await session?.end()
+        await drill?.end()
         session = null
+        drill = null
         break
     }
   }
@@ -188,8 +229,9 @@ server.on('connection', (socket: WebSocket) => {
    * open, not you talking — so it is the number worth watching.
    */
   function reportUsage() {
-    if (!session) return
-    const { spokenCharacters, listenedSeconds } = session.usage()
+    const active = session ?? drill
+    if (!active) return
+    const { spokenCharacters, listenedSeconds } = active.usage()
     const minutes = listenedSeconds / 60
     console.log(
       `[voice] session used ~${spokenCharacters} TTS characters and ` +
@@ -200,7 +242,9 @@ server.on('connection', (socket: WebSocket) => {
   socket.on('close', () => {
     reportUsage()
     void session?.end()
+    void drill?.end()
     session = null
+    drill = null
   })
 
   socket.on('error', (error) => {

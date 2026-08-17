@@ -247,6 +247,53 @@ export interface DiscussionProblem extends ProblemBase {
   expectedPoints: ExpectedPoint[]
 }
 
+/* ---------------------------------------------------------------- rapid fire */
+
+/**
+ * The screening format that costs offers: ten questions, sixty seconds each, no
+ * back-and-forth.
+ *
+ * **Not a `DiscussionProblem` with a short clock.** A discussion question is one
+ * subject explored for twenty minutes by an interviewer who probes, hints, and
+ * follows up; the skill it trains is reasoning out loud. This trains a different
+ * muscle entirely — verbal recall under time pressure, with nobody helping — and
+ * two of the five real rejections behind this project were lost on exactly that.
+ *
+ * The structural consequence is that **no model is in the loop while it runs**.
+ * There is nothing for an interviewer to decide: speak the question, listen,
+ * move on. Grading happens afterwards, in one batched call over every answer,
+ * which is both cheaper and better — the grader sees the whole run at once. See
+ * server/interview/drill.ts for the driver and app/api/drill for the grading.
+ */
+export interface RapidFireQuestion {
+  /** Stable across edits to the set, so a later weakness ledger can name one. */
+  id: string
+  /** Asked verbatim, and spoken verbatim. */
+  prompt: string
+  /** One or two words. Drives the "which topics were weak" summary. */
+  topic: string
+  /**
+   * What a passing answer says. Two or three of them, all required.
+   *
+   * No `essential` flag, unlike a discussion question. Sixty seconds has no room
+   * for bonus material, so a point that does not have to be reached is a point
+   * that does not belong in a set this short.
+   */
+  expectedPoints: string[]
+}
+
+export interface RapidFireSet {
+  slug: string
+  title: string
+  difficulty: Difficulty
+  topics: string[]
+  /** One line under the title, shown before the drill starts. */
+  blurb: string
+  /** Seconds to answer each question. */
+  seconds: number
+  questions: RapidFireQuestion[]
+}
+
 export type Problem = AlgorithmProblem | WorkspaceProblem
 
 export const DISCUSSION_FORMAT_LABELS: Record<DiscussionFormat, string> = {

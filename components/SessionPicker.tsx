@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useMemo, useState } from 'react'
-import type { CatalogueEntry } from '@/lib/session/catalogue'
+import type { CatalogueEntry, DrillEntry } from '@/lib/session/catalogue'
 import { buildCustomSession, buildSession } from '@/lib/session/build'
 import { SESSION_TEMPLATES, templateMinutes } from '@/lib/session/templates'
 import { startSession, useSession } from '@/lib/session/store'
@@ -28,12 +28,18 @@ function entryTag(entry: CatalogueEntry): string {
   return 'Algorithm'
 }
 
-export function SessionPicker({ catalogue }: { catalogue: CatalogueEntry[] }) {
+export function SessionPicker({
+  catalogue,
+  drills,
+}: {
+  catalogue: CatalogueEntry[]
+  drills: DrillEntry[]
+}) {
   const router = useRouter()
   const { session, finish } = useSession()
   const { record } = useRecord()
   const { attempts } = useHistory()
-  const [mode, setMode] = useState<'templates' | 'custom'>('templates')
+  const [mode, setMode] = useState<'templates' | 'custom' | 'drills'>('templates')
   const [picked, setPicked] = useState<string[]>([])
 
   /** The most recent outcome per problem, so the list can show what you've done. */
@@ -136,7 +142,13 @@ export function SessionPicker({ catalogue }: { catalogue: CatalogueEntry[] }) {
       )}
 
       <div className="mb-5 flex gap-1 self-start rounded-md border border-surface-3 p-0.5">
-        {(['templates', 'custom'] as const).map((m) => (
+        {(
+          [
+            ['templates', 'Interview formats'],
+            ['custom', 'Build your own'],
+            ['drills', 'Rapid fire'],
+          ] as const
+        ).map(([m, label]) => (
           <button
             key={m}
             type="button"
@@ -145,12 +157,68 @@ export function SessionPicker({ catalogue }: { catalogue: CatalogueEntry[] }) {
               mode === m ? 'bg-surface-3 text-ink-0' : 'text-ink-2 hover:text-ink-1'
             }`}
           >
-            {m === 'templates' ? 'Interview formats' : 'Build your own'}
+            {label}
           </button>
         ))}
       </div>
 
-      {mode === 'templates' ? (
+      {/*
+        A third tab rather than more rows in "Build your own". A drill is not a
+        session stage — it has its own room, its own clock and its own grading
+        pass — so it cannot be checked into a list whose whole purpose is
+        composing stages, and pretending otherwise would mean teaching the
+        session store about a second kind of timer.
+      */}
+      {mode === 'drills' ? (
+        <div>
+          <p className="mb-4 text-[12.5px] leading-relaxed text-ink-1">
+            Ten questions, sixty seconds each, no follow-ups. This is the screening
+            format rather than the interview one, and it trains a different thing:
+            recall under time pressure, with nobody helping you get there.
+          </p>
+          <ul className="flex flex-col gap-2">
+            {drills.map((drill) => (
+              <li key={drill.slug}>
+                <div className="rounded-lg border border-surface-3 bg-surface-1 px-4 py-3.5">
+                  <div className="flex items-baseline gap-3">
+                    <h2 className="text-[14px] text-ink-0">{drill.title}</h2>
+                    {lastOutcome[drill.slug] && (
+                      <span
+                        className={`shrink-0 rounded border px-1.5 py-px text-[9.5px] uppercase tracking-wide ${
+                          ATTEMPT_STYLE[lastOutcome[drill.slug]]
+                        }`}
+                        title={`Last run: ${lastOutcome[drill.slug]}`}
+                      >
+                        {lastOutcome[drill.slug] === 'solved' ? 'done' : lastOutcome[drill.slug]}
+                      </span>
+                    )}
+                    <span
+                      className={`ml-auto shrink-0 text-[10.5px] uppercase ${DIFFICULTY_COLOR[drill.difficulty]}`}
+                    >
+                      {drill.difficulty}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[12.5px] leading-relaxed text-ink-1">{drill.blurb}</p>
+                  <div className="mt-2 flex flex-wrap gap-x-3 text-[11px] text-ink-2">
+                    <span>
+                      {drill.questionCount} questions · {drill.seconds}s each
+                    </span>
+                    <span>~{Math.round((drill.questionCount * (drill.seconds + 8)) / 60)} min</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => router.push(`/drill/${drill.slug}`)}
+                    aria-label={`Start ${drill.title}`}
+                    className="mt-3 rounded-md bg-accent px-3.5 py-2 text-[12px] font-medium text-surface-0 transition-opacity hover:opacity-90"
+                  >
+                    Start
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : mode === 'templates' ? (
         <ul className="flex flex-col gap-2">
           {SESSION_TEMPLATES.map((template) => {
             const built = buildSession(template, catalogue)

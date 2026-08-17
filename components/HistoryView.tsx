@@ -237,9 +237,17 @@ function TrendDelta({ value }: { value: number | null }) {
   )
 }
 
+/** Each round type has its own room, so "try again" has to know which. */
+function retryHref(source: Attempt['source'], slug: string): string {
+  if (source === 'question') return `/question/${slug}`
+  if (source === 'rapid-fire') return `/drill/${slug}`
+  return `/interview/${slug}`
+}
+
 function AttemptRow({ attempt, index }: { attempt: Attempt; index: number }) {
-  // A spoken round counts objectives; a coding round counts tests. Same slots.
-  const unit = attempt.source === 'question' ? 'points' : 'tests'
+  // Three round types, two slots. A coding round counts tests; a spoken round
+  // and a drill both count expected points.
+  const unit = attempt.source === 'problem' ? 'tests' : 'points'
   const ratio =
     attempt.total !== undefined && attempt.total > 0 ? (attempt.passed ?? 0) / attempt.total : null
 
@@ -398,11 +406,7 @@ export function HistoryView() {
                 )}
 
                 <Link
-                  href={
-                    group.attempts[0].source === 'question'
-                      ? `/question/${group.slug}`
-                      : `/interview/${group.slug}`
-                  }
+                  href={retryHref(group.attempts[0].source, group.slug)}
                   className="ml-auto rounded border border-surface-3 px-2.5 py-1 text-[11.5px] text-ink-2 transition-colors hover:border-accent-dim hover:text-accent"
                 >
                   {group.attempts.length > 1 ? 'Try again' : 'Retry this'}

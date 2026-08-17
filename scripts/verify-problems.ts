@@ -31,10 +31,12 @@ import {
   type DiscussionProblem,
   type Language,
   type Problem,
+  type RapidFireSet,
   type WorkspaceProblem,
 } from '../lib/problems/types'
 import { PROBLEMS } from '../problems/index'
 import { QUESTIONS } from '../questions/index'
+import { RAPID_FIRE_SETS } from '../questions/canon/index'
 
 const PYTHON = process.env.PYTHON_BIN ?? 'python3'
 const RESULT_MARKER = '---RESULTS---'
@@ -486,13 +488,84 @@ function verifyQuestion(question: DiscussionProblem) {
   )
 }
 
+/* ---------------------------------------------------------------- rapid fire */
+
+/**
+ * A rapid-fire set is structural too, but the rules are the opposite shape.
+ *
+ * A discussion question is checked for *depth* — enough points, enough probes,
+ * enough follow-ups. A drill question is checked for *brevity*: two or three
+ * points, because sixty seconds cannot reach five, and a set with a
+ * four-point question in it silently makes that question unpassable.
+ *
+ * The id check is the one that catches a real editing accident. Ids are how a
+ * grading result finds its question, and duplicating one by copy-paste inside a
+ * long file is invisible by eye and produces a summary that marks the wrong
+ * answer.
+ */
+function verifyDrillSet(set: RapidFireSet) {
+  report(
+    set.questions.length >= 8,
+    set.questions.length >= 8
+      ? `${set.questions.length} questions`
+      : `only ${set.questions.length} questions — a screen asks about ten`,
+  )
+
+  report(
+    set.seconds >= 30 && set.seconds <= 120,
+    `${set.seconds} seconds per question`,
+  )
+
+  const ids = set.questions.map((q) => q.id)
+  const duplicates = ids.filter((id, i) => ids.indexOf(id) !== i)
+  report(
+    duplicates.length === 0,
+    duplicates.length === 0
+      ? `${ids.length} unique question ids`
+      : `duplicate question ids: ${[...new Set(duplicates)].join(', ')}`,
+  )
+
+  const thin = set.questions.filter((q) => q.expectedPoints.length < 2)
+  report(
+    thin.length === 0,
+    thin.length === 0
+      ? 'every question has at least 2 expected points'
+      : `too few points on: ${thin.map((q) => q.id).join(', ')}`,
+  )
+
+  const fat = set.questions.filter((q) => q.expectedPoints.length > 3)
+  report(
+    fat.length === 0,
+    fat.length === 0
+      ? 'no question asks for more than 3 points in a minute'
+      : `too many points for ${set.seconds}s on: ${fat.map((q) => q.id).join(', ')}`,
+  )
+
+  // A blank topic collapses the weak-topic summary into one unlabelled bucket,
+  // which is the only part of the result that says what to do next.
+  const untopiced = set.questions.filter((q) => q.topic.trim() === '')
+  report(
+    untopiced.length === 0,
+    untopiced.length === 0
+      ? `${new Set(set.questions.map((q) => q.topic)).size} topics covered`
+      : `missing topic on: ${untopiced.map((q) => q.id).join(', ')}`,
+  )
+
+  const unasked = set.questions.filter((q) => q.prompt.trim() === '')
+  report(unasked.length === 0, unasked.length === 0 ? 'every question has a prompt' : 'blank prompt')
+}
+
 function verifyUniqueSlugs() {
-  const slugs = [...PROBLEMS.map((p) => p.slug), ...QUESTIONS.map((q) => q.slug)]
+  const slugs = [
+    ...PROBLEMS.map((p) => p.slug),
+    ...QUESTIONS.map((q) => q.slug),
+    ...RAPID_FIRE_SETS.map((s) => s.slug),
+  ]
   const duplicates = slugs.filter((s, i) => slugs.indexOf(s) !== i)
   report(
     duplicates.length === 0,
     duplicates.length === 0
-      ? `${slugs.length} unique slugs across problems and questions`
+      ? `${slugs.length} unique slugs across problems, questions and drills`
       : `duplicate slugs: ${[...new Set(duplicates)].join(', ')}`,
   )
 }
@@ -513,13 +586,21 @@ async function main() {
     verifyQuestion(question)
   }
 
+  console.log(`\n${DIM}--- rapid-fire banks (structural checks only) ---${RESET}`)
+  for (const set of RAPID_FIRE_SETS) {
+    console.log(`\n${set.title} ${DIM}(${set.slug})${RESET}`)
+    verifyDrillSet(set)
+  }
+
   console.log('')
   verifyUniqueSlugs()
 
+  const drillQuestions = RAPID_FIRE_SETS.reduce((sum, s) => sum + s.questions.length, 0)
   console.log(
     failures === 0
       ? `\n${GREEN}${PROBLEMS.length} problems verified in both runtimes; ` +
-          `${QUESTIONS.length} questions structurally sound.${RESET}`
+          `${QUESTIONS.length} questions and ${drillQuestions} rapid-fire questions ` +
+          `structurally sound.${RESET}`
       : `\n${RED}${failures} check(s) failed.${RESET}`,
   )
   process.exit(failures === 0 ? 0 : 1)

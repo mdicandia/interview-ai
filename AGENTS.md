@@ -12,8 +12,9 @@ phase breakdown: `~/.claude/plans/can-we-develop-something-wobbly-lamport.md`.
 
 Status: **all of it works** — editor with syntax linting, execution in three
 runtimes, a voice interviewer that opens the round and uses tools, hints,
-backchannel clips, spoken rounds with a coverage grader, resumable sessions with
-automatic reconnection, and the post-session report.
+backchannel clips, spoken rounds with a coverage grader, rapid-fire drills with
+no model in the loop, resumable sessions with automatic reconnection, and the
+post-session report.
 
 Nothing on this line is a promise about the future; if you add something, update
 it. It claimed linting and reconnection were missing for a day after both had
@@ -97,6 +98,17 @@ memory, resume is free: the browser sends back what was said, the server rebuild
 server-side. Anything you are tempted to add as a fourth tool should be weighed
 against this.
 
+**8. A rapid-fire drill has no model in its loop, and must not grow one.**
+`server/interview/drill.ts` is a timer and a speech queue. Nothing decides what
+to say next, because the questions and their order are fixed, and an interviewer
+running a rapid-fire screen deliberately does not react to your answer. Reusing
+`InterviewSession` with a short clock looks like the obvious saving and is the
+trap: it would put a model call in the one path where a two-second pause is a
+mistake rather than a personality, and it would bend a class built to hold a
+conversation into something that is bad at both jobs. Grading is one batched
+call over every answer at the end (`drill-grader.ts`), off the latency path for
+the same reason the coverage grader is. Two small drivers beat one general one.
+
 ## Commands
 
 ```bash
@@ -113,6 +125,7 @@ pnpm verify:session    # storage: outcomes, what a checkpoint freezes, drafts, t
 pnpm verify:tools      # tool dispatch, resume, the tally note — stubbed model, no network
 pnpm verify:problems   # reference solutions pass, starter code fails — both runtimes
 pnpm verify:grader     # its machinery half; SKIP_LIVE=1 leaves out the model call
+pnpm verify:drill      # the drill's counting and parsing half, same SKIP_LIVE split
 ```
 
 One more is free but needs a build first, so it is not in `pnpm test`:
@@ -125,8 +138,9 @@ The rest cost money and are run deliberately, not on every change:
 
 ```bash
 pnpm verify:grader     # without SKIP_LIVE: coverage marks substance, not fluency
+pnpm verify:drill      # without SKIP_LIVE: ten answers marked at once, none leaking between questions
 pnpm verify:report     # the report separates content from delivery, and cites real quotes
-pnpm verify:server     # a real spoken session: turn machine, tool use, barge-in
+pnpm verify:server     # a real spoken session: turn machine, tool use, barge-in, and a drill
 pnpm verify:voice      # the raw pipeline against Deepgram, Cartesia and DeepSeek
 ```
 
@@ -152,6 +166,14 @@ pnpm verify:voice      # the raw pipeline against Deepgram, Cartesia and DeepSee
   share a type with something that does. It *is* in the picker, under "Questions
   (no coding)", and playable: the interviewer asks it and the coverage grader
   scores it against `expectedPoints`.
+- `questions/canon/*.ts` — the rapid-fire banks: ~77 questions across JavaScript,
+  C#/.NET, React, databases, general programming, TypeScript and the web, each
+  with two or three `expectedPoints`. Transcribed from `~/Documents/Resumes/`
+  (`Interview-Canon.md`, and the two Q&A banks of questions really asked), which
+  is the point — a model rewriting them would produce the questions it expects
+  rather than the ones that came up. Kept out of `QUESTIONS` for the same reason
+  that is kept out of `PROBLEMS`. Its own tab in the picker, its own room
+  (`/drill/[slug]`), its own driver, and see constraint 8.
 - `lib/runtime/` — worker protocol, comparison, and the supervising client.
 - `public/workers/` — the two execution workers. See constraint 1.
 - `lib/session/` — session templates and the timer (`store.ts`), plus the evidence
@@ -170,4 +192,6 @@ pnpm verify:voice      # the raw pipeline against Deepgram, Cartesia and DeepSee
   ~1.5s to ~490ms. They are the same speaker as the interviewer, so regenerate
   them whenever the voice changes.
 - `server/interview/` — the frozen-prefix prompt builder, the turn state machine,
-  the hint ladder, the coverage grader (see constraint 7), and `report.ts`.
+  the hint ladder, the coverage grader (see constraint 7), and `report.ts`. Also
+  `drill.ts` and `drill-grader.ts`, which share the STT and TTS clients with the
+  interview and nothing else — see constraint 8.

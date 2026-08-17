@@ -28,7 +28,17 @@ export interface Attempt {
   id: string
   slug: string
   title: string
-  source: 'problem' | 'question'
+  /**
+   * `rapid-fire` is a whole drill — ten questions — as one row.
+   *
+   * Not ten rows. A single question in a drill is thirty words long and its
+   * result on any one morning is noise; the run is the unit that means
+   * something, and the run is what gets repeated. `passed`/`total` carry points
+   * covered out of points available, the same two slots a coding round uses for
+   * tests and a spoken round uses for coverage, so the history renders one row
+   * shape rather than three.
+   */
+  source: 'problem' | 'question' | 'rapid-fire'
   language: Language | null
   endedAt: number
   elapsedMs: number
@@ -238,6 +248,67 @@ export function attachScores(
   }
 
   if (changed) write(attempts)
+}
+
+/**
+ * Where a rapid-fire drill counts as sixty percent covered.
+ *
+ * Not ninety. The format is designed so that nobody clears it: sixty seconds is
+ * enough for the substance of a question and not enough for all three points of
+ * it, and a bar only a perfect run reaches would make every row read the same.
+ * Sixty percent is roughly "you would have got through that screen".
+ */
+const DRILL_PASS_RATIO = 0.6
+
+/**
+ * Records a finished rapid-fire run.
+ *
+ * Written straight to history rather than through the evidence record, because
+ * a drill is not a session round. It has no code, no test runs, no hints, no
+ * transcript worth keeping and no report — the summary screen is its own
+ * feedback, and pushing it through `SessionRecord` would mean giving every one
+ * of those fields an empty value so that `/api/report` could ignore them.
+ *
+ * Every run is a new row, per the rule at the top of this file: the whole value
+ * of drilling the same set in March and again in May is seeing both.
+ */
+export function recordDrill(run: {
+  slug: string
+  title: string
+  covered: number
+  total: number
+  /** How many questions were actually answered rather than sat out. */
+  answered: number
+  elapsedMs: number
+}): void {
+  const outcome: Outcome =
+    run.answered === 0
+      ? 'abandoned'
+      : run.covered >= run.total * DRILL_PASS_RATIO
+        ? 'solved'
+        : run.covered > 0
+          ? 'partial'
+          : 'not-solved'
+
+  const endedAt = Date.now()
+  const attempts = readHistory()
+  const row: Attempt = {
+    id: `drill:${run.slug}:${endedAt}`,
+    slug: run.slug,
+    title: run.title,
+    source: 'rapid-fire',
+    language: null,
+    endedAt,
+    elapsedMs: run.elapsedMs,
+    outcome,
+    passed: run.covered,
+    total: run.total,
+    hintsUsed: 0,
+    solutionRevealed: false,
+    // A drill has no silent mode: the only way to answer is out loud.
+    spokeAloud: true,
+  }
+  write([...attempts, row].sort((a, b) => a.endedAt - b.endedAt))
 }
 
 /**

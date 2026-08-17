@@ -1,5 +1,5 @@
 import { SessionPicker } from '@/components/SessionPicker'
-import { buildCatalogue } from '@/lib/session/catalogue'
+import { buildCatalogue, buildDrills } from '@/lib/session/catalogue'
 
 /**
  * Server component. It builds the metadata-only catalogue here so that problem
@@ -8,5 +8,5 @@ import { buildCatalogue } from '@/lib/session/catalogue'
  * session in the browser.
  */
 export default function Home() {
-  return <SessionPicker catalogue={buildCatalogue()} />
+  return <SessionPicker catalogue={buildCatalogue()} drills={buildDrills()} />
 }

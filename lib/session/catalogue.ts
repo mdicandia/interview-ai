@@ -7,6 +7,7 @@ import type {
 import { supportedLanguages } from '@/lib/problems/types'
 import { PROBLEMS } from '@/problems'
 import { QUESTIONS } from '@/questions'
+import { RAPID_FIRE_SETS } from '@/questions/canon'
 
 /**
  * Metadata-only view of everything practisable.
@@ -56,4 +57,36 @@ export function buildCatalogue(): CatalogueEntry[] {
   }))
 
   return [...problems, ...questions]
+}
+
+/**
+ * The rapid-fire sets, as metadata only.
+ *
+ * Deliberately a second list rather than more `CatalogueEntry` rows. A catalogue
+ * entry is something `buildSession` can resolve into a stage, and a drill is
+ * not: it has its own room, its own driver and its own clock, and a session
+ * template asking for "one rapid-fire round" would have to teach the session
+ * store about a second kind of timer to get it. Keeping them apart means the
+ * picker can offer both while nothing else has to know drills exist.
+ */
+export interface DrillEntry {
+  slug: string
+  title: string
+  blurb: string
+  difficulty: Difficulty
+  topics: string[]
+  questionCount: number
+  seconds: number
+}
+
+export function buildDrills(): DrillEntry[] {
+  return RAPID_FIRE_SETS.map((set) => ({
+    slug: set.slug,
+    title: set.title,
+    blurb: set.blurb,
+    difficulty: set.difficulty,
+    topics: set.topics,
+    questionCount: set.questions.length,
+    seconds: set.seconds,
+  }))
 }

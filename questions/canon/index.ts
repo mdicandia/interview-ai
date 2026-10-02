@@ -21,9 +21,8 @@ import { webFundamentals } from './web'
  * without one of them growing fields it has no use for. It has its own room, its
  * own driver and its own grading pass.
  *
- * All of it is transcription, not authoring. `~/Documents/Resumes/` holds the
- * prose these come from — `Interview-Canon.md`, `Technical-QA-Bank.md` and
- * `React-QA-Bank.md`, the last two being questions really asked with the answer
+ * All of it is transcription, not authoring. the author's private notes are the
+ * prose these come from — an interview canon and two Q&A banks, the last two being questions really asked with the answer
  * that should have been given. That provenance is the value: a model rewriting
  * them would produce the questions it expects rather than the ones that came up.
  */

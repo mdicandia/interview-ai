@@ -20,3 +20,8 @@ allowBuilds:
   protobufjs: false
   sharp: false
   unrs-resolver: false
+
+# pnpm 10 reads this list instead of allowBuilds.
+onlyBuiltDependencies:
+  - esbuild
+  - onnxruntime-node

@@ -2,6 +2,7 @@ import { WebSocketServer, type WebSocket } from 'ws'
 import { getProblem } from '@/problems'
 import { getQuestion } from '@/questions'
 import { getRapidFireSet } from '@/questions/canon'
+import { isAllowedOrigin } from '@/lib/security/origin'
 import { createDeepSeekProvider } from './pipeline/llm'
 import { selectedTtsProvider, warmVoice } from './pipeline/voice'
 import { DrillSession } from './interview/drill'
@@ -47,7 +48,12 @@ const cartesiaKey =
   selectedTtsProvider() === 'cartesia' ? requireKey('CARTESIA_API_KEY') : (process.env.CARTESIA_API_KEY ?? '')
 
 const llm = createDeepSeekProvider(deepseekKey)
-const server = new WebSocketServer({ port: PORT })
+// Loopback only, and no cross-site pages: a socket here spends the user's paid keys.
+const server = new WebSocketServer({
+  host: process.env.VOICE_SERVER_HOST ?? '127.0.0.1',
+  port: PORT,
+  verifyClient: ({ origin }: { origin: string }) => isAllowedOrigin(origin),
+})
 
 // Started now rather than on the first session, so the ~17s cold load of the
 // speech model does not land on whoever presses "Start interview" first.

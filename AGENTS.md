@@ -7,8 +7,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 # interview-ai
 
 A local, single-user tool for practising **live coding interviews**: a voice
-interviewer talking to you while you write code in a shared editor. Build plan and
-phase breakdown: `~/.claude/plans/can-we-develop-something-wobbly-lamport.md`.
+interviewer talking to you while you write code in a shared editor.
 
 Status: **all of it works** — editor with syntax linting, execution in three
 runtimes, a voice interviewer that opens the round and uses tools, hints,
@@ -168,8 +167,8 @@ pnpm verify:voice      # the raw pipeline against Deepgram, Cartesia and DeepSee
   scores it against `expectedPoints`.
 - `questions/canon/*.ts` — the rapid-fire banks: ~77 questions across JavaScript,
   C#/.NET, React, databases, general programming, TypeScript and the web, each
-  with two or three `expectedPoints`. Transcribed from `~/Documents/Resumes/`
-  (`Interview-Canon.md`, and the two Q&A banks of questions really asked), which
+  with two or three `expectedPoints`. Transcribed from prose notes
+  (an interview canon, and two Q&A banks of questions really asked), which
   is the point — a model rewriting them would produce the questions it expects
   rather than the ones that came up. Kept out of `QUESTIONS` for the same reason
   that is kept out of `PROBLEMS`. Its own tab in the picker, its own room

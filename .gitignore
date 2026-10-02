@@ -51,3 +51,4 @@ next-env.d.ts
 # Synthesised speech fixtures for verify:server. Regenerated on demand;
 # committing audio is not worth the repo size.
 .cache/
+.claude/

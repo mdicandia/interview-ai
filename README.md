@@ -18,17 +18,29 @@ under pressure rather than reasoning.
 
 ## Running it
 
+Needs Node 22.9 or later and pnpm.
+
 ```bash
+cp .env.example .env.local   # then add your keys
 pnpm install
 pnpm dev     # UI on :3000, voice server on :8787
 ```
 
-Speech needs two keys in `.env.local` — see `.env.example`. Without them the
+Speech needs two keys in `.env.local` — copy `.env.example` and fill it in. Without them the
 editor, the runtimes and the reports all still work; only the talking does not.
 
 ```bash
 pnpm test    # everything free and deterministic, ~8s
 ```
+
+## Security
+
+This is a local tool whose servers spend your paid API keys, so they listen on
+`127.0.0.1` only. The WebSocket voice server and every `/api` route also refuse
+requests from any browser origin that is not loopback, so a web page you visit
+cannot drive them. To serve it elsewhere, set `VOICE_SERVER_HOST` and list the
+page's origin in `ALLOWED_ORIGINS` (comma-separated) — and put authentication in
+front of it first. `.env.local` is gitignored; never commit it.
 
 ## Where the real documentation is
 
@@ -36,9 +48,6 @@ pnpm test    # everything free and deterministic, ~8s
 constraints that are easy to re-break by accident. Read it before changing
 anything: several of them look like arbitrary choices and are not.
 
-- **[`BACKLOG.md`](BACKLOG.md)** — what to build next, ranked by what has actually
-  cost an interview rather than by effort.
-- **[`PLAN.md`](PLAN.md)** — how that backlog gets built, in dependency order.
 
 ## Layout, briefly
 
@@ -53,3 +62,7 @@ anything: several of them look like arbitrary choices and are not.
 | `server/pipeline/` | Speech to text, text to speech, and the language model behind one interface. |
 | `server/interview/` | The prompt builder, the turn state machine, the coverage grader, the report. |
 | `server/interview/drill.ts` | The rapid-fire driver: a timer and a speech queue, with no model in the loop. |
+
+## Licence
+
+MIT — see [`LICENSE`](LICENSE).
